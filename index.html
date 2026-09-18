@@ -224,7 +224,6 @@
 
 <script>
     let INITIAL_TIMER = 232;
-    const TRAIN_TRAVEL_TIME = 25; // Duración exacta de viaje en segundos
 
     let audioElement = null;
     let images = {};
@@ -272,9 +271,7 @@
     let roundScore = 0;
 
     let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER', 'SESSION_END'
-    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, stepDuration: 1 };
-
-    let lastFrameTime = performance.now();
+    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: 0.02 };
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -332,7 +329,6 @@
     function init() {
         setupBoardData();
         gameState = 'START';
-        lastFrameTime = performance.now();
         requestAnimationFrame(gameLoop);
     }
 
@@ -357,6 +353,7 @@
         totalCoins = 0;
         totalTracksTraversed = 0;
         roundCount = 1;
+        timer = INITIAL_TIMER;
 
         setupBoardData();
         gameState = 'BUILDING';
@@ -391,7 +388,6 @@
                 let elapsed = curTime - roundAudioStart;
                 timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
 
-                // Lanzamiento automático al llegar a 0s
                 if (timer <= 0 && gameState === 'BUILDING') {
                     timer = 0;
                     startTrainRun();
@@ -441,50 +437,9 @@
         pushRandomTrack();
     }
 
-    // Simula la ruta completa para calcular la cantidad de casillas y ajustar la velocidad a 25s
-    function calculatePathTotalSteps() {
-        let steps = 0;
-        let c = 0, r = 0, exit = 1; // Arranca en Retiro mirando al Este
-
-        while (steps < 100) {
-            steps++;
-            let nextC = c, nextR = r;
-
-            if (exit === 0) nextR--;
-            if (exit === 1) nextC++;
-            if (exit === 2) nextR++;
-            if (exit === 3) nextC--;
-
-            if (nextC < 0 || nextC >= COLS || nextR < 0 || nextR >= ROWS) break;
-            let targetCell = grid[nextR][nextC];
-            if (!targetCell) break;
-
-            let reqEntry = (exit + 2) % 4;
-
-            if (targetCell.type === 'station') {
-                if (targetCell.station.isEnd) break; // San Miguel alcanzado
-                c = nextC; r = nextR;
-                exit = (reqEntry + 2) % 4;
-            } else if (targetCell.type === 'track') {
-                if (targetCell.ports[reqEntry] === 1) {
-                    c = nextC; r = nextR;
-                    let nextExit = targetCell.ports.findIndex((p, idx) => p === 1 && idx !== reqEntry);
-                    exit = nextExit;
-                } else {
-                    break; // Choque por vía incompatible
-                }
-            }
-        }
-
-        return Math.max(1, steps);
-    }
-
     function startTrainRun() {
         if (gameState !== 'BUILDING') return;
         gameState = 'RUNNING';
-
-        let totalSteps = calculatePathTotalSteps();
-        let stepDuration = TRAIN_TRAVEL_TIME / totalSteps; // Tiempo exacto por casilla
 
         train = {
             col: 0,
@@ -492,14 +447,14 @@
             entryPort: 3,
             exitPort: 1,
             progress: 0,
-            stepDuration: stepDuration
+            speed: 0.02
         };
     }
 
-    function updateTrain(dt) {
+    function updateTrain() {
         if (gameState !== 'RUNNING') return;
 
-        train.progress += dt / train.stepDuration;
+        train.progress += train.speed;
 
         if (train.progress >= 1) {
             train.progress = 0;
@@ -837,11 +792,8 @@
         ctx.textAlign = 'left';
     }
 
-    function gameLoop(now) {
-        let dt = (now - lastFrameTime) / 1000;
-        lastFrameTime = now;
-
-        updateTrain(dt);
+    function gameLoop() {
+        updateTrain();
         drawScreen();
         requestAnimationFrame(gameLoop);
     }
