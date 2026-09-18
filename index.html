@@ -275,7 +275,7 @@
                 if (config.timer) INITIAL_TIMER = config.timer;
                 if (config.audio && config.audio.file) {
                     audioElement = new Audio(config.audio.file);
-                    audioElement.loop = false;
+                    audioElement.loop = true;
                     audioElement.addEventListener('timeupdate', updateAudioProgressBar);
                 }
                 if (config.audio && config.audio.title) {
@@ -286,7 +286,7 @@
             .catch(err => {
                 console.warn("Cargando recursos por defecto...", err);
                 audioElement = new Audio('audios/san_miguel.mp3');
-                audioElement.loop = false;
+                audioElement.loop = true;
                 audioElement.addEventListener('timeupdate', updateAudioProgressBar);
                 loadImages({
                     'via1': 'images/via1.png',
@@ -319,12 +319,12 @@
     }
 
     function init() {
-        setupBoardData(true);
+        setupBoardData();
         gameState = 'START';
         requestAnimationFrame(gameLoop);
     }
 
-    function setupBoardData(fullReset = false) {
+    function setupBoardData() {
         grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
         
         STATIONS.forEach(st => {
@@ -337,21 +337,16 @@
         for (let i = 0; i < 6; i++) pushRandomTrack();
 
         cursor = { col: 2, row: 0 };
-
-        if (fullReset) {
-            timer = INITIAL_TIMER;
-            score = 0;
-            coinsCollected = 0;
-            tracksTraversed = 0;
-        }
+        score = 0;
+        coinsCollected = 0;
+        tracksTraversed = 0;
     }
 
     function startNewGameSession() {
-        setupBoardData(true);
+        setupBoardData();
         gameState = 'BUILDING';
 
-        if (audioElement) {
-            audioElement.currentTime = 0;
+        if (audioElement && audioElement.paused) {
             playAudioTrack();
         }
 
@@ -359,30 +354,27 @@
     }
 
     function restartCurrentRound() {
-        setupBoardData(false);
+        setupBoardData();
         gameState = 'BUILDING';
 
-        if (audioElement && audioElement.paused && timer > 0) {
-            audioElement.play();
+        if (audioElement && audioElement.paused) {
+            playAudioTrack();
         }
     }
 
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            if (audioElement && !audioElement.paused && audioElement.duration) {
+            if (audioElement && audioElement.duration) {
                 timer = Math.max(0, Math.ceil(audioElement.duration - audioElement.currentTime));
             } else if (timer > 0) {
                 timer--;
             }
 
-            if (timer <= 0) {
-                timer = 0;
-                if (gameState === 'BUILDING') {
-                    startTrainRun();
-                }
+            if (timer <= 0 && gameState === 'BUILDING') {
+                startTrainRun();
             }
-        }, 1000);
+        }, 200);
     }
 
     function playAudioTrack() {
@@ -456,7 +448,7 @@
 
             if (train.exitPort === 0) nextRow--;
             if (train.exitPort === 1) nextCol++;
-            if (train.exitPort === 2) nextRow++;
+            if (train.exitPort === 2) nextRow--;
             if (train.exitPort === 3) nextCol--;
 
             if (nextCol < 0 || nextCol >= COLS || nextRow < 0 || nextRow >= ROWS) {
@@ -488,7 +480,6 @@
                 train.col = nextCol;
                 train.row = nextRow;
                 train.entryPort = requiredEntryPort;
-                // Atraviesa la estación continuando en la misma dirección que venía
                 train.exitPort = (requiredEntryPort + 2) % 4;
             } else if (targetCell.type === 'track') {
                 if (targetCell.ports[requiredEntryPort] === 1) {
@@ -583,7 +574,7 @@
             } else {
                 ctx.fillStyle = '#ff3366';
                 ctx.font = 'bold 22px Courier New';
-                ctx.fillText('¡DESCARRILASTE!', canvas.width / 2, 160);
+                ctx.fillText('¡NO LLEGA MÁS!', canvas.width / 2, 160);
             }
 
             ctx.fillStyle = '#00ff66';
@@ -594,11 +585,7 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = '12px Courier New';
-            if (timer > 0 && gameState === 'GAMEOVER') {
-                ctx.fillText(`Tiempo restante: ${timer}s - Presiona A para rearmar`, canvas.width / 2, 305);
-            } else {
-                ctx.fillText('Presiona A para reiniciar nueva partida', canvas.width / 2, 305);
-            }
+            ctx.fillText(`Tiempo restante: ${timer}s - Presiona A para jugar otra ronda`, canvas.width / 2, 305);
             ctx.textAlign = 'left';
         }
     }
@@ -633,6 +620,7 @@
         ctx.fillText(`FICHAS: ${coinsCollected}`, centerX, 81);
 
         ctx.fillStyle = '#00ff66';
+        ctx.font = 'bold 13px Courier New';
         ctx.fillText(`PUNTOS: ${score}`, centerX, 106);
 
         ctx.fillStyle = '#00ff66';
@@ -766,14 +754,8 @@
             startNewGameSession();
         } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
             placeTrack();
-        } else if (gameState === 'GAMEOVER') {
-            if (timer > 0) {
-                restartCurrentRound();
-            } else {
-                startNewGameSession();
-            }
-        } else if (gameState === 'VICTORY') {
-            startNewGameSession();
+        } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+            restartCurrentRound();
         }
     }
 
