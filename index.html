@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>CSF - San Miguel Express</title>
+    <style>
+        :root {
+            --bg-color: #021206;
+            --console-bg: #051d0a;
+            --primary-color: #00ff66;
+            --accent-color: #ff3366;
+            --gold-color: #ffcc00;
+            --border-shadow: rgba(0, 255, 102, 0.35);
+        }
+
+        * { box-sizing: border-box; user-select: none; }
+        body {
+            background-color: var(--bg-color);
+            color: var(--primary-color);
+            font-family: 'Courier New', Courier, monospace;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-image: 
+                linear-gradient(rgba(0, 255, 102, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 255, 102, 0.05) 1px, transparent 1px);
+            background-size: 25px 25px;
+            overflow: hidden;
+        }
+
+        #console {
+            width: 95%;
+            max-width: 440px;
+            height: 88vh;
+            max-height: 840px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            border: 2px solid var(--primary-color);
+            padding: 15px 18px;
+            background-color: var(--console-bg);
+            border-radius: 20px;
+            box-shadow: 0 0 25px var(--border-shadow), inset 0 0 15px rgba(0, 255, 102, 0.1);
+        }
+
+        #music-player {
+            border: 1px solid var(--primary-color);
+            border-radius: 6px;
+            padding: 6px 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: rgba(0, 255, 102, 0.03);
+            box-shadow: 0 0 5px rgba(0, 255, 102, 0.1) inset;
+        }
+
+        #play-btn-box {
+            border: 1px solid var(--primary-color);
+            border-radius: 4px;
+            width: 28px; height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            background: rgba(0, 255, 102, 0.1);
+        }
+
+        .play-icon {
+            width: 0; height: 0; 
+            border-top: 4px solid transparent;
+            border-bottom: 4px solid transparent;
+            border-left: 7px solid var(--primary-color);
+            transition: all 0.2s;
+            margin-left: 2px;
+        }
+        .play-icon.playing {
+            border-top: none; border-bottom: none; border-left: 2px solid var(--primary-color);
+            border-right: 2px solid var(--primary-color);
+            width: 6px; height: 8px;
+            background: transparent;
+            margin-left: 0;
+        }
+
+        .track-info {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+        }
+
+        .track-name {
+            font-size: 9px;
+            letter-spacing: 1.5px;
+            font-weight: bold;
+        }
+
+        .track-bar-container {
+            width: 100%;
+            height: 5px;
+            background: rgba(0, 255, 102, 0.1);
+            border-radius: 3px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .track-progress {
+            width: 0%;
+            height: 100%;
+            background: var(--primary-color);
+            transition: width 0.1s linear;
+        }
+
+        #game-screen {
+            border: 2px solid var(--primary-color);
+            width: 100%;
+            aspect-ratio: 600 / 450;
+            height: auto;
+            background-color: #ffffff;
+            position: relative;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 0 10px rgba(0, 255, 102, 0.2) inset;
+            cursor: pointer;
+            touch-action: none;
+        }
+        canvas { display: block; width: 100%; height: 100%; }
+
+        .brand-title {
+            text-align: center; font-size: 12px; 
+            letter-spacing: 3px; color: var(--primary-color);
+            text-shadow: 0 0 8px rgba(0, 255, 102, 0.5);
+        }
+
+        #controls-area {
+            display: flex; justify-content: space-between; align-items: center; 
+            padding: 0 2px;
+        }
+
+        .d-pad { position: relative; width: 110px; height: 110px; }
+        .d-btn {
+            position: absolute; background: rgba(0, 255, 102, 0.05);
+            border: 1px solid var(--primary-color); display: flex; justify-content: center; align-items: center;
+            color: var(--primary-color); font-size: 14px; box-shadow: 0 0 5px rgba(0, 255, 102, 0.2);
+            cursor: pointer;
+        }
+        .d-up { top: 0; left: 36px; width: 38px; height: 38px; border-bottom: none; border-radius: 5px 5px 0 0; }
+        .d-down { bottom: 0; left: 36px; width: 38px; height: 38px; border-top: none; border-radius: 0 0 5px 5px; }
+        .d-left { top: 36px; left: 0; width: 38px; height: 38px; border-right: none; border-radius: 5px 0 0 5px; }
+        .d-right { top: 36px; right: 0; width: 38px; height: 38px; border-left: none; border-radius: 0 5px 5px 0; }
+        .d-center { top: 36px; left: 36px; width: 38px; height: 38px; border: 1px solid var(--primary-color); background: rgba(0, 255, 102, 0.15); }
+
+        .action-container { display: flex; gap: 12px; align-items: flex-end; }
+        .action-group { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+        .action-btn {
+            width: 58px; height: 58px; border-radius: 50%;
+            border: 2px solid var(--primary-color); background: rgba(0, 255, 102, 0.08);
+            color: var(--primary-color); font-size: 18px; font-weight: bold; display: flex;
+            justify-content: center; align-items: center; cursor: pointer;
+            box-shadow: 0 0 10px rgba(0, 255, 102, 0.3); transition: background 0.1s;
+        }
+        .action-btn:active { background: rgba(0, 255, 102, 0.3); box-shadow: 0 0 15px rgba(0, 255, 102, 0.6); }
+        .action-label { font-size: 8px; letter-spacing: 1px; color: var(--primary-color); }
+        
+        #group-b { margin-bottom: 18px; }
+
+        .footer-shortcuts {
+            display: flex; justify-content: space-between; font-size: 8px;
+            color: rgba(0, 255, 102, 0.7); border-top: 1px dashed rgba(0, 255, 102, 0.25); padding-top: 6px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="console">
+    <div id="music-player">
+        <div id="play-btn-box" onclick="toggleAudio()">
+            <div class="play-icon" id="play-icon"></div>
+        </div>
+        <div class="track-info">
+            <div class="track-name" id="track-title">SAN MIGUEL EXPRESS</div>
+            <div class="track-bar-container">
+                <div class="track-progress" id="track-progress"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-screen">
+        <canvas id="gameCanvas" width="600" height="450"></canvas>
+    </div>
+
+    <div class="brand-title" id="brand-title-text">
+        〰️ Con Sin Fichas 〰️
+    </div>
+
+    <div id="controls-area">
+        <div class="d-pad">
+            <div class="d-btn d-up" id="btn-up">▲</div>
+            <div class="d-btn d-left" id="btn-left">◀</div>
+            <div class="d-btn d-center"></div>
+            <div class="d-btn d-right" id="btn-right">▶</div>
+            <div class="d-btn d-down" id="btn-down">▼</div>
+        </div>
+        
+        <div class="action-container">
+            <div class="action-group" id="group-b">
+                <div class="action-btn" id="btn-b">B</div>
+                <span class="action-label">LARGAR TREN</span>
+            </div>
+            <div class="action-group" id="group-a">
+                <div class="action-btn" id="btn-a">A</div>
+                <span class="action-label">COLOCAR VÍA</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-shortcuts">
+        <span>⌨ Flechas: Mover Cursor | A: Colocar Vía</span>
+        <span>B: Largar Tren Anticipado</span>
+    </div>
+</div>
+
+<script>
+    let INITIAL_TIMER = 196;
+    let audioElement = null;
+    let images = {};
+
+    const TRACK_TYPES = {
+        'via1': { name: 'Horizontal', ports: [0, 1, 0, 1] },
+        'via2': { name: 'Vertical',   ports: [1, 0, 1, 0] },
+        'via3': { name: 'Curva NE',   ports: [1, 1, 0, 0] },
+        'via4': { name: 'Curva ES',   ports: [0, 1, 1, 0] },
+        'via5': { name: 'Curva SO',   ports: [0, 0, 1, 1] },
+        'via6': { name: 'Curva ON',   ports: [1, 0, 0, 1] }
+    };
+    const TRACK_KEYS = ['via1', 'via2', 'via3', 'via4', 'via5', 'via6'];
+
+    const COLS = 8;
+    const ROWS = 8;
+    const GRID_WIDTH = 450;
+    const CELL_SIZE = GRID_WIDTH / COLS; // 56.25px
+    const SIDEBAR_X = 450;
+    const SIDEBAR_WIDTH = 150;
+
+    const STATIONS = [
+        { name: 'RETIRO', col: 0, row: 0, isStart: true, coins: 0 },
+        { name: 'PALERMO', col: 3, row: 1, isStart: false, coins: 150 },
+        { name: 'CHACARITA', col: 1, row: 3, isStart: false, coins: 200 },
+        { name: 'PATERNAL', col: 5, row: 4, isStart: false, coins: 250 },
+        { name: 'DEVOTO', col: 2, row: 6, isStart: false, coins: 300 },
+        { name: 'SAN MIGUEL', col: 6, row: 7, isEnd: true, coins: 500 }
+    ];
+
+    let grid = [];
+    let queue = [];
+    let cursor = { col: 2, row: 0 };
+    let timer = INITIAL_TIMER;
+    let timerInterval = null;
+    let score = 0;
+    let coinsCollected = 0;
+    let tracksTraversed = 0;
+
+    let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER'
+    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: 0.02 };
+
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    function loadConfigAndAssets(callback) {
+        fetch('config.json?v=' + Date.now())
+            .then(res => res.json())
+            .then(config => {
+                if (config.timer) INITIAL_TIMER = config.timer;
+                if (config.audio && config.audio.file) {
+                    audioElement = new Audio(config.audio.file);
+                    audioElement.loop = true;
+                    audioElement.addEventListener('timeupdate', updateAudioProgressBar);
+                }
+                if (config.audio && config.audio.title) {
+                    document.getElementById('track-title').innerText = config.audio.title;
+                }
+                loadImages(config.assets || {}, callback);
+            })
+            .catch(err => {
+                console.warn("Cargando rutas predeterminadas de recursos...", err);
+                audioElement = new Audio('audios/san_miguel.mp3');
+                audioElement.loop = true;
+                audioElement.addEventListener('timeupdate', updateAudioProgressBar);
+                loadImages({
+                    'via1': 'images/via1.png',
+                    'via2': 'images/via2.png',
+                    'via3': 'images/via3.png',
+                    'via4': 'images/via4.png',
+                    'via5': 'images/via5.png',
+                    'via6': 'images/via6.png'
+                }, callback);
+            });
+    }
+
+    function loadImages(assetsObj, callback) {
+        let keys = Object.keys(assetsObj);
+        let loaded = 0;
+        if (keys.length === 0) { callback(); return; }
+        keys.forEach(key => {
+            images[key] = new Image();
+            images[key].src = assetsObj[key];
+            images[key].onload = () => { loaded++; if (loaded === keys.length) callback(); };
+            images[key].onerror = () => { loaded++; if (loaded === keys.length) callback(); };
+        });
+    }
+
+    function updateAudioProgressBar() {
+        if (audioElement && audioElement.duration) {
+            const pct = (audioElement.currentTime / audioElement.duration) * 100;
+            document.getElementById('track-progress').style.width = pct + '%';
+        }
+    }
+
+    function init() {
+        setupBoardData();
+        gameState = 'START';
+        requestAnimationFrame(gameLoop);
+    }
+
+    function setupBoardData() {
+        grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
+        
+        STATIONS.forEach(st => {
+            st.visited = false;
+            grid[st.row][st.col] = { type: 'station', station: st, isMainCell: true };
+            grid[st.row][st.col + 1] = { type: 'station', station: st, isMainCell: false };
+        });
+
+        queue = [];
+        for (let i = 0; i < 6; i++) pushRandomTrack();
+
+        cursor = { col: 2, row: 0 };
+        timer = INITIAL_TIMER;
+        score = 0;
+        coinsCollected = 0;
+        tracksTraversed = 0;
+    }
+
+    function startActualGame() {
+        setupBoardData();
+        gameState = 'BUILDING';
+
+        // Reproducción del audio mp3
+        playAudioTrack();
+
+        // Cuenta regresiva
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            if (gameState === 'BUILDING') {
+                timer--;
+                if (timer <= 0) {
+                    timer = 0;
+                    startTrainRun();
+                }
+            }
+        }, 1000);
+    }
+
+    function playAudioTrack() {
+        if (audioElement) {
+            audioElement.play().then(() => {
+                document.getElementById('play-icon').classList.add('playing');
+            }).catch(err => {
+                console.log('Autoplay de audio restringido por navegador:', err);
+            });
+        }
+    }
+
+    function toggleAudio() {
+        if (!audioElement) return;
+        if (audioElement.paused) {
+            audioElement.play();
+            document.getElementById('play-icon').classList.add('playing');
+        } else {
+            audioElement.pause();
+            document.getElementById('play-icon').classList.remove('playing');
+        }
+    }
+
+    function pushRandomTrack() {
+        const randKey = TRACK_KEYS[Math.floor(Math.random() * TRACK_KEYS.length)];
+        queue.push(randKey);
+    }
+
+    function placeTrack() {
+        if (gameState !== 'BUILDING' && gameState !== 'RUNNING') return;
+
+        let cell = grid[cursor.row][cursor.col];
+        if (cell && cell.type === 'station') return;
+        if (gameState === 'RUNNING' && cursor.col === train.col && cursor.row === train.row) return;
+
+        let trackKey = queue.shift();
+        grid[cursor.row][cursor.col] = {
+            type: 'track',
+            key: trackKey,
+            ports: TRACK_TYPES[trackKey].ports
+        };
+        pushRandomTrack();
+    }
+
+    function startTrainRun() {
+        if (gameState !== 'BUILDING') return;
+        gameState = 'RUNNING';
+
+        train = {
+            col: 0,
+            row: 0,
+            entryPort: 3,
+            exitPort: 1,
+            progress: 0,
+            speed: 0.02
+        };
+    }
+
+    function updateTrain() {
+        if (gameState !== 'RUNNING') return;
+
+        train.progress += train.speed;
+
+        if (train.progress >= 1) {
+            train.progress = 0;
+            tracksTraversed++;
+            score += 50;
+
+            let nextCol = train.col;
+            let nextRow = train.row;
+
+            if (train.exitPort === 0) nextRow--;
+            if (train.exitPort === 1) nextCol++;
+            if (train.exitPort === 2) nextRow++;
+            if (train.exitPort === 3) nextCol--;
+
+            if (nextCol < 0 || nextCol >= COLS || nextRow < 0 || nextRow >= ROWS) {
+                gameState = 'GAMEOVER';
+                return;
+            }
+
+            let targetCell = grid[nextRow][nextCol];
+            let requiredEntryPort = (train.exitPort + 2) % 4;
+
+            if (!targetCell) {
+                gameState = 'GAMEOVER';
+                return;
+            }
+
+            if (targetCell.type === 'station') {
+                if (!targetCell.station.visited) {
+                    targetCell.station.visited = true;
+                    score += targetCell.station.coins;
+                    coinsCollected += targetCell.station.coins;
+                }
+
+                if (targetCell.station.isEnd) {
+                    gameState = 'VICTORY';
+                    score += 1000;
+                    return;
+                }
+
+                train.col = nextCol;
+                train.row = nextRow;
+                train.entryPort = requiredEntryPort;
+                train.exitPort = 1;
+            } else if (targetCell.type === 'track') {
+                if (targetCell.ports[requiredEntryPort] === 1) {
+                    train.col = nextCol;
+                    train.row = nextRow;
+                    train.entryPort = requiredEntryPort;
+                    let nextExit = targetCell.ports.findIndex((p, idx) => p === 1 && idx !== requiredEntryPort);
+                    train.exitPort = nextExit;
+                } else {
+                    gameState = 'GAMEOVER';
+                }
+            }
+        }
+    }
+
+    function drawScreen() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, GRID_WIDTH, canvas.height);
+
+        for (let r = 0; r < ROWS; r++) {
+            for (let c = 0; c < COLS; c++) {
+                let x = c * CELL_SIZE;
+                let y = r * CELL_SIZE;
+
+                ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, CELL_SIZE, CELL_SIZE);
+
+                let cell = grid[r][c];
+                if (cell) {
+                    if (cell.type === 'station' && cell.isMainCell) {
+                        drawStation(x, y, cell.station, cell.station.visited);
+                    } else if (cell.type === 'track') {
+                        drawTrackPieceCustom(x, y, CELL_SIZE, cell.key);
+                    }
+                }
+            }
+        }
+
+        if (gameState === 'BUILDING' || gameState === 'RUNNING') {
+            let cx = cursor.col * CELL_SIZE;
+            let cy = cursor.row * CELL_SIZE;
+            ctx.strokeStyle = '#ff3366';
+            ctx.lineWidth = 3.5;
+            ctx.strokeRect(cx + 1, cy + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+        }
+
+        if (gameState === 'RUNNING' || gameState === 'VICTORY' || gameState === 'GAMEOVER') {
+            drawTrain();
+        }
+
+        drawSidebar();
+
+        if (gameState === 'START') {
+            ctx.fillStyle = 'rgba(2, 18, 6, 0.92)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            let boxWidth = 480;
+            let boxHeight = 220;
+            let boxX = (canvas.width - boxWidth) / 2;
+            let boxY = (canvas.height - boxHeight) / 2;
+
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            ctx.strokeStyle = '#00ff66';
+            ctx.lineWidth = 3;
+            ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = 'bold 20px Courier New';
+            ctx.fillText('Boleto de ida hasta San Miguel', canvas.width / 2, boxY + 80);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 12px Courier New';
+            ctx.fillText('presiona A o toca la pantalla para comenzar', canvas.width / 2, boxY + 145);
+
+            ctx.textAlign = 'left';
+        }
+
+        if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+            ctx.fillStyle = 'rgba(2, 18, 6, 0.9)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.textAlign = 'center';
+            if (gameState === 'VICTORY') {
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = 'bold 22px Courier New';
+                ctx.fillText('¡LLEGASTE A SAN MIGUEL!', canvas.width / 2, 160);
+            } else {
+                ctx.fillStyle = '#ff3366';
+                ctx.font = 'bold 22px Courier New';
+                ctx.fillText('¡DESCARRILASTE!', canvas.width / 2, 160);
+            }
+
+            ctx.fillStyle = '#00ff66';
+            ctx.font = 'bold 13px Courier New';
+            ctx.fillText(`Vías Cruzadas: ${tracksTraversed}`, canvas.width / 2, 205);
+            ctx.fillText(`Fichas Recolectadas: ${coinsCollected}`, canvas.width / 2, 230);
+            ctx.fillText(`Puntaje Total: ${score}`, canvas.width / 2, 255);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Courier New';
+            ctx.fillText('Presiona A o Toca para reiniciar', canvas.width / 2, 305);
+            ctx.textAlign = 'left';
+        }
+    }
+
+    function drawSidebar() {
+        ctx.fillStyle = '#051d0a';
+        ctx.fillRect(SIDEBAR_X, 0, SIDEBAR_WIDTH, canvas.height);
+
+        ctx.strokeStyle = '#00ff66';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(SIDEBAR_X, 0);
+        ctx.lineTo(SIDEBAR_X, canvas.height);
+        ctx.stroke();
+
+        const centerX = SIDEBAR_X + (SIDEBAR_WIDTH / 2);
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#00ff66';
+        ctx.font = 'bold 13px Courier New';
+        ctx.fillText('ESTADO', centerX, 24);
+
+        ctx.strokeStyle = 'rgba(0, 255, 102, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(SIDEBAR_X + 10, 32, SIDEBAR_WIDTH - 20, 95);
+
+        ctx.font = 'bold 12px Courier New';
+        ctx.fillStyle = timer <= 10 ? '#ff3366' : '#ffffff';
+        ctx.fillText(`TIEMPO: ${String(timer).padStart(3, '0')}s`, centerX, 56);
+
+        ctx.fillStyle = '#ffcc00';
+        ctx.fillText(`FICHAS: ${coinsCollected}`, centerX, 81);
+
+        ctx.fillStyle = '#00ff66';
+        ctx.fillText(`PUNTOS: ${score}`, centerX, 106);
+
+        ctx.fillStyle = '#00ff66';
+        ctx.font = 'bold 13px Courier New';
+        ctx.fillText('PRÓXIMAS VÍAS', centerX, 152);
+
+        let queueBoxY = 162;
+        for (let i = 0; i < 4; i++) {
+            let itemKey = queue[i];
+            let itemY = queueBoxY + i * 68;
+
+            if (i === 0) {
+                ctx.fillStyle = 'rgba(255, 204, 0, 0.15)';
+                ctx.fillRect(SIDEBAR_X + 10, itemY, SIDEBAR_WIDTH - 20, 60);
+                ctx.strokeStyle = '#ffcc00';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(SIDEBAR_X + 10, itemY, SIDEBAR_WIDTH - 20, 60);
+            } else {
+                ctx.strokeStyle = 'rgba(0, 255, 102, 0.25)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(SIDEBAR_X + 10, itemY, SIDEBAR_WIDTH - 20, 60);
+            }
+
+            drawTrackPieceCustom(SIDEBAR_X + 16, itemY + 10, 40, itemKey);
+
+            ctx.textAlign = 'left';
+            ctx.fillStyle = i === 0 ? '#ffcc00' : '#ffffff';
+            ctx.font = 'bold 9px Courier New';
+            ctx.fillText(TRACK_TYPES[itemKey].name, SIDEBAR_X + 62, itemY + 34);
+        }
+        ctx.textAlign = 'left';
+    }
+
+    function drawStation(x, y, st, visited) {
+        let width = CELL_SIZE * 2 - 4;
+        let height = CELL_SIZE - 4;
+
+        ctx.fillStyle = '#000000';
+        ctx.fillRect(x + 2, y + 2, width, height);
+
+        ctx.strokeStyle = st.isStart ? '#00ff66' : (st.isEnd ? '#ff3366' : (visited ? '#ffcc00' : '#00ff66'));
+        ctx.lineWidth = 2.5;
+        ctx.strokeRect(x + 2, y + 2, width, height);
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 15px Courier New';
+        ctx.textAlign = 'center';
+
+        if (st.coins > 0) {
+            ctx.fillText(st.name, x + CELL_SIZE, y + 25);
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = 'bold 11px Courier New';
+            ctx.fillText(`+${st.coins}`, x + CELL_SIZE, y + 43);
+        } else {
+            ctx.fillText(st.name, x + CELL_SIZE, y + 32);
+        }
+        ctx.textAlign = 'left';
+    }
+
+    function drawTrackPieceCustom(x, y, size, key) {
+        if (images[key] && images[key].complete && images[key].naturalWidth > 0) {
+            ctx.drawImage(images[key], x, y, size, size);
+            return;
+        }
+
+        ctx.strokeStyle = '#222222';
+        ctx.lineWidth = size * 0.12;
+        ctx.beginPath();
+
+        let cx = x + size / 2;
+        let cy = y + size / 2;
+
+        if (key === 'via1') {
+            ctx.moveTo(x, cy); ctx.lineTo(x + size, cy);
+        } else if (key === 'via2') {
+            ctx.moveTo(cx, y); ctx.lineTo(cx, y + size);
+        } else if (key === 'via3') {
+            ctx.moveTo(cx, y); ctx.quadraticCurveTo(cx, cy, x + size, cy);
+        } else if (key === 'via4') {
+            ctx.moveTo(x + size, cy); ctx.quadraticCurveTo(cx, cy, cx, y + size);
+        } else if (key === 'via5') {
+            ctx.moveTo(cx, y + size); ctx.quadraticCurveTo(cx, cy, x, cy);
+        } else if (key === 'via6') {
+            ctx.moveTo(x, cy); ctx.quadraticCurveTo(cx, cy, cx, y);
+        }
+        ctx.stroke();
+
+        ctx.strokeStyle = '#ffcc00';
+        ctx.lineWidth = size * 0.04;
+        ctx.stroke();
+    }
+
+    function drawTrain() {
+        let tx = train.col * CELL_SIZE + CELL_SIZE / 2;
+        let ty = train.row * CELL_SIZE + CELL_SIZE / 2;
+
+        if (train.exitPort === 0) ty -= train.progress * CELL_SIZE;
+        if (train.exitPort === 1) tx += train.progress * CELL_SIZE;
+        if (train.exitPort === 2) ty += train.progress * CELL_SIZE;
+        if (train.exitPort === 3) tx -= train.progress * CELL_SIZE;
+
+        ctx.fillStyle = '#ffcc00';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 10, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#000000';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        ctx.fillStyle = '#000000';
+        ctx.font = '10px Courier New';
+        ctx.textAlign = 'center';
+        ctx.fillText('🚂', tx, ty + 3);
+        ctx.textAlign = 'left';
+    }
+
+    function gameLoop() {
+        updateTrain();
+        drawScreen();
+        requestAnimationFrame(gameLoop);
+    }
+
+    function moveCursor(dc, dr) {
+        if (gameState !== 'BUILDING' && gameState !== 'RUNNING') return;
+        cursor.col = Math.max(0, Math.min(COLS - 1, cursor.col + dc));
+        cursor.row = Math.max(0, Math.min(ROWS - 1, cursor.row + dr));
+    }
+
+    function handleActionA() {
+        if (gameState === 'START') {
+            startActualGame();
+        } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
+            placeTrack();
+        } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+            startActualGame();
+        }
+    }
+
+    function handleActionB() {
+        if (gameState === 'BUILDING') {
+            startTrainRun();
+        }
+    }
+
+    window.addEventListener('keydown', (e) => {
+        if (e.repeat) return;
+        if (e.code === 'ArrowUp') moveCursor(0, -1);
+        if (e.code === 'ArrowDown') moveCursor(0, 1);
+        if (e.code === 'ArrowLeft') moveCursor(-1, 0);
+        if (e.code === 'ArrowRight') moveCursor(1, 0);
+        if (e.code === 'Space' || e.code === 'KeyA') handleActionA();
+        if (e.code === 'KeyB') handleActionB();
+    });
+
+    document.getElementById('btn-up').addEventListener('click', () => moveCursor(0, -1));
+    document.getElementById('btn-down').addEventListener('click', () => moveCursor(0, 1));
+    document.getElementById('btn-left').addEventListener('click', () => moveCursor(-1, 0));
+    document.getElementById('btn-right').addEventListener('click', () => moveCursor(1, 0));
+    document.getElementById('btn-a').addEventListener('click', handleActionA);
+    document.getElementById('btn-b').addEventListener('click', handleActionB);
+
+    canvas.addEventListener('click', (e) => {
+        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+            handleActionA();
+            return;
+        }
+
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        const clickX = (e.clientX - rect.left) * scaleX;
+        const clickY = (e.clientY - rect.top) * scaleY;
+
+        if (clickX < GRID_WIDTH) {
+            const c = Math.floor(clickX / CELL_SIZE);
+            const r = Math.floor(clickY / CELL_SIZE);
+
+            if (c >= 0 && c < COLS && r >= 0 && r < ROWS) {
+                cursor.col = c;
+                cursor.row = r;
+                handleActionA();
+            }
+        }
+    });
+
+    loadConfigAndAssets(init);
+</script>
+</body>
+</html>

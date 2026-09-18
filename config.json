@@ -1,0 +1,15 @@
+{
+  "audio": {
+    "title": "SAN MIGUEL",
+    "file": "audios/san_miguel.mp3"
+  },
+  "assets": {
+    "via1": "images/via1.png",
+    "via2": "images/via2.png",
+    "via3": "images/via3.png",
+    "via4": "images/via4.png",
+    "via5": "images/via5.png",
+    "via6": "images/via6.png"
+  },
+  "timer": 196
+}
