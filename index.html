@@ -223,7 +223,7 @@
 </div>
 
 <script>
-    let INITIAL_TIMER = 196;
+    let INITIAL_TIMER = 198;
     let audioElement = null;
     let images = {};
 
@@ -240,7 +240,7 @@
     const COLS = 8;
     const ROWS = 8;
     const GRID_WIDTH = 450;
-    const CELL_SIZE = GRID_WIDTH / COLS; // 56.25px
+    const CELL_SIZE = GRID_WIDTH / COLS;
     const SIDEBAR_X = 450;
     const SIDEBAR_WIDTH = 150;
 
@@ -275,7 +275,7 @@
                 if (config.timer) INITIAL_TIMER = config.timer;
                 if (config.audio && config.audio.file) {
                     audioElement = new Audio(config.audio.file);
-                    audioElement.loop = true;
+                    audioElement.loop = false;
                     audioElement.addEventListener('timeupdate', updateAudioProgressBar);
                 }
                 if (config.audio && config.audio.title) {
@@ -284,9 +284,9 @@
                 loadImages(config.assets || {}, callback);
             })
             .catch(err => {
-                console.warn("Cargando rutas predeterminadas de recursos...", err);
+                console.warn("Cargando recursos por defecto...", err);
                 audioElement = new Audio('audios/san_miguel.mp3');
-                audioElement.loop = true;
+                audioElement.loop = false;
                 audioElement.addEventListener('timeupdate', updateAudioProgressBar);
                 loadImages({
                     'via1': 'images/via1.png',
@@ -319,12 +319,12 @@
     }
 
     function init() {
-        setupBoardData();
+        setupBoardData(true);
         gameState = 'START';
         requestAnimationFrame(gameLoop);
     }
 
-    function setupBoardData() {
+    function setupBoardData(fullReset = false) {
         grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
         
         STATIONS.forEach(st => {
@@ -337,26 +337,52 @@
         for (let i = 0; i < 6; i++) pushRandomTrack();
 
         cursor = { col: 2, row: 0 };
-        timer = INITIAL_TIMER;
-        score = 0;
-        coinsCollected = 0;
-        tracksTraversed = 0;
+
+        if (fullReset) {
+            timer = INITIAL_TIMER;
+            score = 0;
+            coinsCollected = 0;
+            tracksTraversed = 0;
+        }
     }
 
-    function startActualGame() {
-        setupBoardData();
+    // Inicia una sesión completa (Canción desde 0 y 198 segundos)
+    function startNewGameSession() {
+        setupBoardData(true);
         gameState = 'BUILDING';
 
-        // Reproducción del audio mp3
-        playAudioTrack();
+        if (audioElement) {
+            audioElement.currentTime = 0;
+            playAudioTrack();
+        }
 
-        // Cuenta regresiva
+        startGlobalTimer();
+    }
+
+    // Reintento continuo: no reinicia el temporizador ni el audio
+    function restartCurrentRound() {
+        setupBoardData(false);
+        gameState = 'BUILDING';
+
+        // Si el audio estaba pausado por algún motivo, reanudar
+        if (audioElement && audioElement.paused && timer > 0) {
+            audioElement.play();
+        }
+    }
+
+    function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            if (gameState === 'BUILDING') {
+            // Si hay audio sonando, sincronizamos el timer con el tiempo restante exacto de la canción
+            if (audioElement && !audioElement.paused && audioElement.duration) {
+                timer = Math.max(0, Math.ceil(audioElement.duration - audioElement.currentTime));
+            } else if (timer > 0) {
                 timer--;
-                if (timer <= 0) {
-                    timer = 0;
+            }
+
+            if (timer <= 0) {
+                timer = 0;
+                if (gameState === 'BUILDING') {
                     startTrainRun();
                 }
             }
@@ -368,7 +394,7 @@
             audioElement.play().then(() => {
                 document.getElementById('play-icon').classList.add('playing');
             }).catch(err => {
-                console.log('Autoplay de audio restringido por navegador:', err);
+                console.log('Autoplay bloqueado:', err);
             });
         }
     }
@@ -571,7 +597,11 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = '12px Courier New';
-            ctx.fillText('Presiona A o Toca para reiniciar', canvas.width / 2, 305);
+            if (timer > 0 && gameState === 'GAMEOVER') {
+                ctx.fillText(`Tiempo restante: ${timer}s - Presiona A para rearmar`, canvas.width / 2, 305);
+            } else {
+                ctx.fillText('Presiona A para reiniciar nueva partida', canvas.width / 2, 305);
+            }
             ctx.textAlign = 'left';
         }
     }
@@ -736,11 +766,17 @@
 
     function handleActionA() {
         if (gameState === 'START') {
-            startActualGame();
+            startNewGameSession();
         } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
             placeTrack();
-        } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
-            startActualGame();
+        } else if (gameState === 'GAMEOVER') {
+            if (timer > 0) {
+                restartCurrentRound(); // Conserva el tiempo restante y continúa la música
+            } else {
+                startNewGameSession(); // Inicia partida limpia si ya expiró el tiempo
+            }
+        } else if (gameState === 'VICTORY') {
+            startNewGameSession();
         }
     }
 
