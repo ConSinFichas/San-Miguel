@@ -224,9 +224,11 @@
 
 <script>
     let INITIAL_TIMER = 232;
+    let TRAIN_SPEED = 0.02;
 
     let audioElement = null;
     let images = {};
+    let lastAudioTime = 0;
 
     const TRACK_TYPES = {
         'via1': { name: 'Horizontal', ports: [0, 1, 0, 1] },
@@ -271,7 +273,7 @@
     let roundScore = 0;
 
     let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER', 'SESSION_END'
-    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: 0.02 };
+    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: TRAIN_SPEED };
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -281,6 +283,7 @@
             .then(res => res.json())
             .then(config => {
                 if (config.timer) INITIAL_TIMER = config.timer;
+                if (config.trainSpeed) TRAIN_SPEED = config.trainSpeed;
                 if (config.audio && config.audio.file) {
                     audioElement = new Audio(config.audio.file);
                     audioElement.loop = true;
@@ -321,8 +324,17 @@
 
     function updateAudioProgressBar() {
         if (audioElement && audioElement.duration) {
-            const pct = (audioElement.currentTime / audioElement.duration) * 100;
+            const cur = audioElement.currentTime;
+            const pct = (cur / audioElement.duration) * 100;
             document.getElementById('track-progress').style.width = pct + '%';
+
+            // Detectar reinicio del bucle de audio cuando vuelve al principio
+            if (cur < lastAudioTime - 5) {
+                if (gameState === 'SESSION_END') {
+                    startNewGameSession();
+                }
+            }
+            lastAudioTime = cur;
         }
     }
 
@@ -423,7 +435,8 @@
     }
 
     function placeTrack() {
-        if (gameState !== 'BUILDING') return;
+        // Permitir colocar vías tanto en BUILDING como en RUNNING
+        if (gameState !== 'BUILDING' && gameState !== 'RUNNING') return;
 
         let cell = grid[cursor.row][cursor.col];
         if (cell && cell.type === 'station') return;
@@ -447,7 +460,7 @@
             entryPort: 3,
             exitPort: 1,
             progress: 0,
-            speed: 0.02
+            speed: TRAIN_SPEED
         };
     }
 
@@ -626,21 +639,23 @@
             ctx.textAlign = 'center';
             ctx.fillStyle = '#ffcc00';
             ctx.font = 'bold 24px Courier New';
-            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 130);
+            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 120);
 
             ctx.fillStyle = '#00ff66';
             ctx.font = 'bold 14px Courier New';
-            ctx.fillText(`Rondas Jugadas: ${roundCount}`, canvas.width / 2, 175);
-            ctx.fillText(`Fichas Recolectadas: ${totalCoins}`, canvas.width / 2, 200);
-            ctx.fillText(`Vías Recorridas: ${totalTracksTraversed}`, canvas.width / 2, 225);
+            ctx.fillText(`Rondas Jugadas: ${roundCount}`, canvas.width / 2, 165);
+            ctx.fillText(`Fichas Recolectadas: ${totalCoins}`, canvas.width / 2, 190);
+            ctx.fillText(`Vías Recorridas: ${totalTracksTraversed}`, canvas.width / 2, 215);
 
             ctx.fillStyle = '#ffcc00';
             ctx.font = 'bold 18px Courier New';
-            ctx.fillText(`PUNTAJE FINAL: ${sessionScore}`, canvas.width / 2, 265);
+            ctx.fillText(`PUNTAJE FINAL: ${sessionScore}`, canvas.width / 2, 255);
 
             ctx.fillStyle = '#ffffff';
-            ctx.font = '12px Courier New';
-            ctx.fillText('Presiona A para reiniciar nueva partida (232s)', canvas.width / 2, 315);
+            ctx.font = 'bold 11px Courier New';
+            ctx.fillText('Esperando reinicio de la canción...', canvas.width / 2, 305);
+            ctx.font = '9px Courier New';
+            ctx.fillText('(La partida iniciará automáticamente al sonar de nuevo)', canvas.width / 2, 325);
             ctx.textAlign = 'left';
         }
     }
@@ -805,9 +820,9 @@
     }
 
     function handleActionA() {
-        if (gameState === 'START' || gameState === 'SESSION_END') {
+        if (gameState === 'START') {
             startNewGameSession();
-        } else if (gameState === 'BUILDING') {
+        } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
             placeTrack();
         } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
             nextRound();
@@ -838,7 +853,7 @@
     document.getElementById('btn-b').addEventListener('click', handleActionB);
 
     canvas.addEventListener('click', (e) => {
-        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY' || gameState === 'SESSION_END') {
+        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY') {
             handleActionA();
             return;
         }
