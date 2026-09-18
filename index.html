@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>CSF - San Miguel Express</title>
+    <title>CSF - San Miguel</title>
     <style>
         :root {
             --bg-color: #021206;
@@ -247,13 +247,10 @@
     const SIDEBAR_X = 450;
     const SIDEBAR_WIDTH = 150;
 
-    const STATIONS = [
-        { name: 'RETIRO', col: 0, row: 0, isStart: true, coins: 0 },
-        { name: 'PALERMO', col: 3, row: 1, isStart: false, coins: 150 },
-        { name: 'CHACARITA', col: 1, row: 3, isStart: false, coins: 200 },
-        { name: 'PATERNAL', col: 5, row: 4, isStart: false, coins: 250 },
-        { name: 'DEVOTO', col: 2, row: 6, isStart: false, coins: 300 },
-        { name: 'SAN MIGUEL', col: 6, row: 7, isEnd: true, coins: 500 }
+    const INTERMEDIATE_STATION_POOL = [
+        "V. DEL PARQUE", "S. PEÑA", "S. LUGARES", "CASEROS",
+        "PALOMAR", "HURLINGHAM", "W. MORRIS", "MUÑIZ",
+        "B. VISTA", "JOSE C. PAZ"
     ];
 
     let grid = [];
@@ -273,7 +270,7 @@
     let roundScore = 0;
 
     let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER', 'SESSION_END'
-    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: TRAIN_SPEED };
+    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: TRAIN_SPEED, lastStation: null };
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -328,7 +325,6 @@
             const pct = (cur / audioElement.duration) * 100;
             document.getElementById('track-progress').style.width = pct + '%';
 
-            // Detectar reinicio del bucle de audio cuando vuelve al principio
             if (cur < lastAudioTime - 5) {
                 if (gameState === 'SESSION_END') {
                     startNewGameSession();
@@ -344,10 +340,54 @@
         requestAnimationFrame(gameLoop);
     }
 
+    function generateRandomStations() {
+        const stations = [
+            { name: 'RETIRO', col: 0, row: 0, isStart: true, coins: 0 },
+            { name: 'SAN MIGUEL', col: 6, row: 7, isEnd: true, coins: 500 }
+        ];
+
+        let occupied = Array(ROWS).fill(false).map(() => Array(COLS).fill(false));
+        // Ocupar celdas dobles de Retiro y San Miguel
+        occupied[0][0] = true; occupied[0][1] = true;
+        occupied[7][6] = true; occupied[7][7] = true;
+
+        let shuffledNames = [...INTERMEDIATE_STATION_POOL].sort(() => Math.random() - 0.5);
+        let selectedNames = shuffledNames.slice(0, 4);
+
+        const coinValues = [150, 200, 250, 300];
+
+        selectedNames.forEach((name, idx) => {
+            let placed = false;
+            let attempts = 0;
+            while (!placed && attempts < 200) {
+                attempts++;
+                let r = Math.floor(Math.random() * ROWS);
+                let c = Math.floor(Math.random() * (COLS - 1)); // 0 a 6 para ocupar c y c+1
+
+                if (!occupied[r][c] && !occupied[r][c + 1]) {
+                    occupied[r][c] = true;
+                    occupied[r][c + 1] = true;
+                    stations.push({
+                        name: name,
+                        col: c,
+                        row: r,
+                        isStart: false,
+                        coins: coinValues[idx]
+                    });
+                    placed = true;
+                }
+            }
+        });
+
+        return stations;
+    }
+
     function setupBoardData() {
         grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
         
-        STATIONS.forEach(st => {
+        let currentStations = generateRandomStations();
+
+        currentStations.forEach(st => {
             st.visited = false;
             grid[st.row][st.col] = { type: 'station', station: st, isMainCell: true };
             grid[st.row][st.col + 1] = { type: 'station', station: st, isMainCell: false };
@@ -435,7 +475,6 @@
     }
 
     function placeTrack() {
-        // Permitir colocar vías tanto en BUILDING como en RUNNING
         if (gameState !== 'BUILDING' && gameState !== 'RUNNING') return;
 
         let cell = grid[cursor.row][cursor.col];
@@ -454,13 +493,16 @@
         if (gameState !== 'BUILDING') return;
         gameState = 'RUNNING';
 
+        let startCell = grid[0][0];
+
         train = {
             col: 0,
             row: 0,
             entryPort: 3,
             exitPort: 1,
             progress: 0,
-            speed: TRAIN_SPEED
+            speed: TRAIN_SPEED,
+            lastStation: startCell ? startCell.station : null
         };
     }
 
@@ -496,7 +538,9 @@
             }
 
             if (targetCell.type === 'station') {
-                if (!targetCell.station.visited) {
+                // Si entra a una estación distinta de la última o si reingresa tras estar en una vía
+                if (train.lastStation !== targetCell.station) {
+                    train.lastStation = targetCell.station;
                     targetCell.station.visited = true;
                     roundScore += targetCell.station.coins;
                     totalCoins += targetCell.station.coins;
@@ -513,6 +557,8 @@
                 train.entryPort = requiredEntryPort;
                 train.exitPort = (requiredEntryPort + 2) % 4;
             } else if (targetCell.type === 'track') {
+                train.lastStation = null; // Al salir a una vía, habilita volver a colectar en cualquier estación
+
                 if (targetCell.ports[requiredEntryPort] === 1) {
                     train.col = nextCol;
                     train.row = nextRow;
@@ -731,12 +777,12 @@
         ctx.fillStyle = '#000000';
         ctx.fillRect(x + 2, y + 2, width, height);
 
-        ctx.strokeStyle = st.isStart ? '#00ff66' : (st.isEnd ? '#ff3366' : (visited ? '#ffcc00' : '#00ff66'));
+        ctx.strokeStyle = st.isStart ? '#00ff66' : (st.isEnd ? '#ff3366' : '#ffcc00');
         ctx.lineWidth = 2.5;
         ctx.strokeRect(x + 2, y + 2, width, height);
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 15px Courier New';
+        ctx.font = 'bold 13px Courier New';
         ctx.textAlign = 'center';
 
         if (st.coins > 0) {
