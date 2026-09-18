@@ -365,8 +365,10 @@
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            if (audioElement && audioElement.duration) {
-                timer = Math.max(0, Math.ceil(audioElement.duration - audioElement.currentTime));
+            if (audioElement) {
+                // Se descuenta desde INITIAL_TIMER (125s) según el progreso del audio
+                const elapsed = audioElement.currentTime % INITIAL_TIMER;
+                timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
             } else if (timer > 0) {
                 timer--;
             }
@@ -448,7 +450,7 @@
 
             if (train.exitPort === 0) nextRow--;
             if (train.exitPort === 1) nextCol++;
-            if (train.exitPort === 2) nextRow--;
+            if (train.exitPort === 2) nextRow++; // Corregido: Incrementa la fila al ir al Sur
             if (train.exitPort === 3) nextCol--;
 
             if (nextCol < 0 || nextCol >= COLS || nextRow < 0 || nextRow >= ROWS) {
@@ -574,7 +576,7 @@
             } else {
                 ctx.fillStyle = '#ff3366';
                 ctx.font = 'bold 22px Courier New';
-                ctx.fillText('¡NO LLEGA MÁS!', canvas.width / 2, 160);
+                ctx.fillText('¡DESCARRILASTE!', canvas.width / 2, 160);
             }
 
             ctx.fillStyle = '#00ff66';
