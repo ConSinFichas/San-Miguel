@@ -223,7 +223,9 @@
 </div>
 
 <script>
-    let INITIAL_TIMER = 125;
+    let INITIAL_TIMER = 232;
+    const TRAIN_TRAVEL_TIME = 25; // Duración exacta de viaje en segundos
+
     let audioElement = null;
     let images = {};
 
@@ -259,12 +261,20 @@
     let timer = INITIAL_TIMER;
     let timerInterval = null;
     let roundAudioStart = 0;
-    let score = 0;
-    let coinsCollected = 0;
-    let tracksTraversed = 0;
 
-    let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER'
-    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: 0.02 };
+    // Métricas Acumuladas de la Sesión
+    let sessionScore = 0;
+    let totalCoins = 0;
+    let totalTracksTraversed = 0;
+    let roundCount = 0;
+
+    // Métricas de la Ronda Actual
+    let roundScore = 0;
+
+    let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER', 'SESSION_END'
+    let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, stepDuration: 1 };
+
+    let lastFrameTime = performance.now();
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
@@ -322,6 +332,7 @@
     function init() {
         setupBoardData();
         gameState = 'START';
+        lastFrameTime = performance.now();
         requestAnimationFrame(gameLoop);
     }
 
@@ -338,12 +349,15 @@
         for (let i = 0; i < 6; i++) pushRandomTrack();
 
         cursor = { col: 2, row: 0 };
-        score = 0;
-        coinsCollected = 0;
-        tracksTraversed = 0;
+        roundScore = 0;
     }
 
     function startNewGameSession() {
+        sessionScore = 0;
+        totalCoins = 0;
+        totalTracksTraversed = 0;
+        roundCount = 1;
+
         setupBoardData();
         gameState = 'BUILDING';
 
@@ -355,35 +369,32 @@
         startGlobalTimer();
     }
 
-    function restartCurrentRound() {
-        setupBoardData();
-        gameState = 'BUILDING';
-
-        if (audioElement) {
-            if (audioElement.paused) playAudioTrack();
-            roundAudioStart = audioElement.currentTime;
+    function nextRound() {
+        if (timer <= 0) {
+            gameState = 'SESSION_END';
+            return;
         }
 
-        startGlobalTimer();
+        roundCount++;
+        setupBoardData();
+        gameState = 'BUILDING';
     }
 
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            if (gameState === 'BUILDING') {
-                if (audioElement && !audioElement.paused) {
-                    let curTime = audioElement.currentTime;
-                    if (curTime < roundAudioStart && audioElement.duration) {
-                        curTime += audioElement.duration;
-                    }
-                    let elapsed = curTime - roundAudioStart;
-                    timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
+            if (audioElement && !audioElement.paused) {
+                let curTime = audioElement.currentTime;
+                if (curTime < roundAudioStart && audioElement.duration) {
+                    curTime += audioElement.duration;
+                }
+                let elapsed = curTime - roundAudioStart;
+                timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
 
-                    // Al llegar a 0s, se automátiza la salida del tren
-                    if (timer <= 0) {
-                        timer = 0;
-                        startTrainRun();
-                    }
+                // Lanzamiento automático al llegar a 0s
+                if (timer <= 0 && gameState === 'BUILDING') {
+                    timer = 0;
+                    startTrainRun();
                 }
             }
         }, 100);
@@ -416,11 +427,10 @@
     }
 
     function placeTrack() {
-        if (gameState !== 'BUILDING' && gameState !== 'RUNNING') return;
+        if (gameState !== 'BUILDING') return;
 
         let cell = grid[cursor.row][cursor.col];
         if (cell && cell.type === 'station') return;
-        if (gameState === 'RUNNING' && cursor.col === train.col && cursor.row === train.row) return;
 
         let trackKey = queue.shift();
         grid[cursor.row][cursor.col] = {
@@ -431,9 +441,50 @@
         pushRandomTrack();
     }
 
+    // Simula la ruta completa para calcular la cantidad de casillas y ajustar la velocidad a 25s
+    function calculatePathTotalSteps() {
+        let steps = 0;
+        let c = 0, r = 0, exit = 1; // Arranca en Retiro mirando al Este
+
+        while (steps < 100) {
+            steps++;
+            let nextC = c, nextR = r;
+
+            if (exit === 0) nextR--;
+            if (exit === 1) nextC++;
+            if (exit === 2) nextR++;
+            if (exit === 3) nextC--;
+
+            if (nextC < 0 || nextC >= COLS || nextR < 0 || nextR >= ROWS) break;
+            let targetCell = grid[nextR][nextC];
+            if (!targetCell) break;
+
+            let reqEntry = (exit + 2) % 4;
+
+            if (targetCell.type === 'station') {
+                if (targetCell.station.isEnd) break; // San Miguel alcanzado
+                c = nextC; r = nextR;
+                exit = (reqEntry + 2) % 4;
+            } else if (targetCell.type === 'track') {
+                if (targetCell.ports[reqEntry] === 1) {
+                    c = nextC; r = nextR;
+                    let nextExit = targetCell.ports.findIndex((p, idx) => p === 1 && idx !== reqEntry);
+                    exit = nextExit;
+                } else {
+                    break; // Choque por vía incompatible
+                }
+            }
+        }
+
+        return Math.max(1, steps);
+    }
+
     function startTrainRun() {
         if (gameState !== 'BUILDING') return;
         gameState = 'RUNNING';
+
+        let totalSteps = calculatePathTotalSteps();
+        let stepDuration = TRAIN_TRAVEL_TIME / totalSteps; // Tiempo exacto por casilla
 
         train = {
             col: 0,
@@ -441,19 +492,19 @@
             entryPort: 3,
             exitPort: 1,
             progress: 0,
-            speed: 0.02
+            stepDuration: stepDuration
         };
     }
 
-    function updateTrain() {
+    function updateTrain(dt) {
         if (gameState !== 'RUNNING') return;
 
-        train.progress += train.speed;
+        train.progress += dt / train.stepDuration;
 
         if (train.progress >= 1) {
             train.progress = 0;
-            tracksTraversed++;
-            score += 50;
+            totalTracksTraversed++;
+            roundScore += 50;
 
             let nextCol = train.col;
             let nextRow = train.row;
@@ -464,7 +515,7 @@
             if (train.exitPort === 3) nextCol--;
 
             if (nextCol < 0 || nextCol >= COLS || nextRow < 0 || nextRow >= ROWS) {
-                gameState = 'GAMEOVER';
+                endRound(false);
                 return;
             }
 
@@ -472,20 +523,20 @@
             let requiredEntryPort = (train.exitPort + 2) % 4;
 
             if (!targetCell) {
-                gameState = 'GAMEOVER';
+                endRound(false);
                 return;
             }
 
             if (targetCell.type === 'station') {
                 if (!targetCell.station.visited) {
                     targetCell.station.visited = true;
-                    score += targetCell.station.coins;
-                    coinsCollected += targetCell.station.coins;
+                    roundScore += targetCell.station.coins;
+                    totalCoins += targetCell.station.coins;
                 }
 
                 if (targetCell.station.isEnd) {
-                    gameState = 'VICTORY';
-                    score += 1000;
+                    roundScore += 1000;
+                    endRound(true);
                     return;
                 }
 
@@ -501,9 +552,22 @@
                     let nextExit = targetCell.ports.findIndex((p, idx) => p === 1 && idx !== requiredEntryPort);
                     train.exitPort = nextExit;
                 } else {
-                    gameState = 'GAMEOVER';
+                    endRound(false);
                 }
             }
+        }
+    }
+
+    function endRound(isVictory) {
+        sessionScore += roundScore;
+        if (isVictory) {
+            gameState = 'VICTORY';
+        } else {
+            gameState = 'GAMEOVER';
+        }
+
+        if (timer <= 0) {
+            gameState = 'SESSION_END';
         }
     }
 
@@ -541,7 +605,7 @@
             ctx.strokeRect(cx + 1, cy + 1, CELL_SIZE - 2, CELL_SIZE - 2);
         }
 
-        if (gameState === 'RUNNING' || gameState === 'VICTORY' || gameState === 'GAMEOVER') {
+        if (gameState === 'RUNNING' || gameState === 'VICTORY' || gameState === 'GAMEOVER' || gameState === 'SESSION_END') {
             drawTrain();
         }
 
@@ -569,7 +633,7 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = 'bold 12px Courier New';
-            ctx.fillText('presiona A o toca la pantalla para comenzar', canvas.width / 2, boxY + 145);
+            ctx.fillText('Presiona A o toca la pantalla para comenzar', canvas.width / 2, boxY + 145);
 
             ctx.textAlign = 'left';
         }
@@ -582,22 +646,46 @@
             if (gameState === 'VICTORY') {
                 ctx.fillStyle = '#ffcc00';
                 ctx.font = 'bold 22px Courier New';
-                ctx.fillText('¡LLEGASTE A SAN MIGUEL!', canvas.width / 2, 160);
+                ctx.fillText('¡LLEGASTE A SAN MIGUEL!', canvas.width / 2, 140);
             } else {
                 ctx.fillStyle = '#ff3366';
                 ctx.font = 'bold 22px Courier New';
-                ctx.fillText('¡DESCARRILASTE!', canvas.width / 2, 160);
+                ctx.fillText('¡DESCARRILASTE!', canvas.width / 2, 140);
             }
 
             ctx.fillStyle = '#00ff66';
             ctx.font = 'bold 13px Courier New';
-            ctx.fillText(`Vías Cruzadas: ${tracksTraversed}`, canvas.width / 2, 205);
-            ctx.fillText(`Fichas Recolectadas: ${coinsCollected}`, canvas.width / 2, 230);
-            ctx.fillText(`Puntaje Total: ${score}`, canvas.width / 2, 255);
+            ctx.fillText(`Puntos Ronda: +${roundScore}`, canvas.width / 2, 185);
+            ctx.fillText(`TOTAL ACUMULADO: ${sessionScore}`, canvas.width / 2, 215);
 
             ctx.fillStyle = '#ffffff';
             ctx.font = '12px Courier New';
-            ctx.fillText('Presiona A para jugar otra ronda', canvas.width / 2, 305);
+            ctx.fillText(`Reloj: ${timer}s - Presiona A para la siguiente ronda`, canvas.width / 2, 280);
+            ctx.textAlign = 'left';
+        }
+
+        if (gameState === 'SESSION_END') {
+            ctx.fillStyle = 'rgba(2, 18, 6, 0.95)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = 'bold 24px Courier New';
+            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 130);
+
+            ctx.fillStyle = '#00ff66';
+            ctx.font = 'bold 14px Courier New';
+            ctx.fillText(`Rondas Jugadas: ${roundCount}`, canvas.width / 2, 175);
+            ctx.fillText(`Fichas Recolectadas: ${totalCoins}`, canvas.width / 2, 200);
+            ctx.fillText(`Vías Recorridas: ${totalTracksTraversed}`, canvas.width / 2, 225);
+
+            ctx.fillStyle = '#ffcc00';
+            ctx.font = 'bold 18px Courier New';
+            ctx.fillText(`PUNTAJE FINAL: ${sessionScore}`, canvas.width / 2, 265);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Courier New';
+            ctx.fillText('Presiona A para reiniciar nueva partida (232s)', canvas.width / 2, 315);
             ctx.textAlign = 'left';
         }
     }
@@ -629,11 +717,11 @@
         ctx.fillText(`TIEMPO: ${String(timer).padStart(3, '0')}s`, centerX, 56);
 
         ctx.fillStyle = '#ffcc00';
-        ctx.fillText(`FICHAS: ${coinsCollected}`, centerX, 81);
+        ctx.fillText(`FICHAS: ${totalCoins}`, centerX, 81);
 
         ctx.fillStyle = '#00ff66';
-        ctx.font = 'bold 13px Courier New';
-        ctx.fillText(`PUNTOS: ${score}`, centerX, 106);
+        ctx.font = 'bold 12px Courier New';
+        ctx.fillText(`TOTAL: ${sessionScore + roundScore}`, centerX, 106);
 
         ctx.fillStyle = '#00ff66';
         ctx.font = 'bold 13px Courier New';
@@ -749,8 +837,11 @@
         ctx.textAlign = 'left';
     }
 
-    function gameLoop() {
-        updateTrain();
+    function gameLoop(now) {
+        let dt = (now - lastFrameTime) / 1000;
+        lastFrameTime = now;
+
+        updateTrain(dt);
         drawScreen();
         requestAnimationFrame(gameLoop);
     }
@@ -762,12 +853,12 @@
     }
 
     function handleActionA() {
-        if (gameState === 'START') {
+        if (gameState === 'START' || gameState === 'SESSION_END') {
             startNewGameSession();
-        } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
+        } else if (gameState === 'BUILDING') {
             placeTrack();
         } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
-            restartCurrentRound();
+            nextRound();
         }
     }
 
@@ -795,7 +886,7 @@
     document.getElementById('btn-b').addEventListener('click', handleActionB);
 
     canvas.addEventListener('click', (e) => {
-        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY' || gameState === 'SESSION_END') {
             handleActionA();
             return;
         }
