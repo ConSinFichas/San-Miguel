@@ -223,7 +223,7 @@
 </div>
 
 <script>
-    let INITIAL_TIMER = 198;
+    let INITIAL_TIMER = 125;
     let audioElement = null;
     let images = {};
 
@@ -346,7 +346,6 @@
         }
     }
 
-    // Inicia una sesión completa (Canción desde 0 y 198 segundos)
     function startNewGameSession() {
         setupBoardData(true);
         gameState = 'BUILDING';
@@ -359,12 +358,10 @@
         startGlobalTimer();
     }
 
-    // Reintento continuo: no reinicia el temporizador ni el audio
     function restartCurrentRound() {
         setupBoardData(false);
         gameState = 'BUILDING';
 
-        // Si el audio estaba pausado por algún motivo, reanudar
         if (audioElement && audioElement.paused && timer > 0) {
             audioElement.play();
         }
@@ -373,7 +370,6 @@
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            // Si hay audio sonando, sincronizamos el timer con el tiempo restante exacto de la canción
             if (audioElement && !audioElement.paused && audioElement.duration) {
                 timer = Math.max(0, Math.ceil(audioElement.duration - audioElement.currentTime));
             } else if (timer > 0) {
@@ -492,7 +488,8 @@
                 train.col = nextCol;
                 train.row = nextRow;
                 train.entryPort = requiredEntryPort;
-                train.exitPort = 1;
+                // Atraviesa la estación continuando en la misma dirección que venía
+                train.exitPort = (requiredEntryPort + 2) % 4;
             } else if (targetCell.type === 'track') {
                 if (targetCell.ports[requiredEntryPort] === 1) {
                     train.col = nextCol;
@@ -771,9 +768,9 @@
             placeTrack();
         } else if (gameState === 'GAMEOVER') {
             if (timer > 0) {
-                restartCurrentRound(); // Conserva el tiempo restante y continúa la música
+                restartCurrentRound();
             } else {
-                startNewGameSession(); // Inicia partida limpia si ya expiró el tiempo
+                startNewGameSession();
             }
         } else if (gameState === 'VICTORY') {
             startNewGameSession();
