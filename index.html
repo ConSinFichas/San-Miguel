@@ -258,6 +258,7 @@
     let cursor = { col: 2, row: 0 };
     let timer = INITIAL_TIMER;
     let timerInterval = null;
+    let roundAudioStart = 0;
     let score = 0;
     let coinsCollected = 0;
     let tracksTraversed = 0;
@@ -346,8 +347,9 @@
         setupBoardData();
         gameState = 'BUILDING';
 
-        if (audioElement && audioElement.paused) {
-            playAudioTrack();
+        if (audioElement) {
+            if (audioElement.paused) playAudioTrack();
+            roundAudioStart = audioElement.currentTime;
         }
 
         startGlobalTimer();
@@ -357,26 +359,34 @@
         setupBoardData();
         gameState = 'BUILDING';
 
-        if (audioElement && audioElement.paused) {
-            playAudioTrack();
+        if (audioElement) {
+            if (audioElement.paused) playAudioTrack();
+            roundAudioStart = audioElement.currentTime;
         }
+
+        startGlobalTimer();
     }
 
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
-            if (audioElement) {
-                // Se descuenta desde INITIAL_TIMER (125s) según el progreso del audio
-                const elapsed = audioElement.currentTime % INITIAL_TIMER;
-                timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
-            } else if (timer > 0) {
-                timer--;
-            }
+            if (gameState === 'BUILDING') {
+                if (audioElement && !audioElement.paused) {
+                    let curTime = audioElement.currentTime;
+                    if (curTime < roundAudioStart && audioElement.duration) {
+                        curTime += audioElement.duration;
+                    }
+                    let elapsed = curTime - roundAudioStart;
+                    timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
 
-            if (timer <= 0 && gameState === 'BUILDING') {
-                startTrainRun();
+                    // Al llegar a 0s, se automátiza la salida del tren
+                    if (timer <= 0) {
+                        timer = 0;
+                        startTrainRun();
+                    }
+                }
             }
-        }, 200);
+        }, 100);
     }
 
     function playAudioTrack() {
@@ -450,7 +460,7 @@
 
             if (train.exitPort === 0) nextRow--;
             if (train.exitPort === 1) nextCol++;
-            if (train.exitPort === 2) nextRow++; // Corregido: Incrementa la fila al ir al Sur
+            if (train.exitPort === 2) nextRow++;
             if (train.exitPort === 3) nextCol--;
 
             if (nextCol < 0 || nextCol >= COLS || nextRow < 0 || nextRow >= ROWS) {
@@ -587,7 +597,7 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = '12px Courier New';
-            ctx.fillText(`Tiempo restante: ${timer}s - Presiona A para jugar otra ronda`, canvas.width / 2, 305);
+            ctx.fillText('Presiona A para jugar otra ronda', canvas.width / 2, 305);
             ctx.textAlign = 'left';
         }
     }
