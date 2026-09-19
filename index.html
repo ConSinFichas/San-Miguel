@@ -380,7 +380,11 @@
                 if (config.audio && config.audio.title) {
                     document.getElementById('track-title').innerText = config.audio.title;
                 }
-                loadImages(config.assets || {}, callback);
+
+                let assetsObj = config.assets || {};
+                if (!assetsObj['train']) assetsObj['train'] = 'images/train.png';
+
+                loadImages(assetsObj, callback);
             })
             .catch(err => {
                 console.warn("Cargando recursos por defecto...", err);
@@ -393,7 +397,8 @@
                     'via3': 'images/via3.png',
                     'via4': 'images/via4.png',
                     'via5': 'images/via5.png',
-                    'via6': 'images/via6.png'
+                    'via6': 'images/via6.png',
+                    'train': 'images/train.png'
                 }, callback);
             });
     }
@@ -962,19 +967,18 @@
         if (train.exitPort === 2) ty += train.progress * CELL_SIZE;
         if (train.exitPort === 3) tx -= train.progress * CELL_SIZE;
 
-        ctx.fillStyle = '#ffcc00';
-        ctx.beginPath();
-        ctx.arc(tx, ty, 10, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#000000';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        let trainImg = images['train'];
+        let size = CELL_SIZE * 0.85;
 
-        ctx.fillStyle = '#000000';
-        ctx.font = '10px Courier New';
-        ctx.textAlign = 'center';
-        ctx.fillText('🚂', tx, ty + 3);
-        ctx.textAlign = 'left';
+        if (trainImg && trainImg.complete && trainImg.naturalWidth > 0) {
+            ctx.drawImage(trainImg, tx - size / 2, ty - size / 2, size, size);
+        } else {
+            // Carga de respaldo en caso de retraso al traer la imagen PNG
+            ctx.fillStyle = '#ffcc00';
+            ctx.beginPath();
+            ctx.arc(tx, ty, 10, 0, Math.PI * 2);
+            ctx.fill();
+        }
     }
 
     function gameLoop() {
@@ -997,7 +1001,6 @@
         } else if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
             nextRound();
         }
-        // En 'SESSION_END' no se hace nada para forzar que el reinicio sea solo al reiniciar la música
     }
 
     function handleActionB() {
@@ -1029,7 +1032,7 @@
             return;
         }
         if (gameState === 'SESSION_END') {
-            return; // Desactiva el reinicio por click en fin de sesión
+            return;
         }
         if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
             handleActionA();
