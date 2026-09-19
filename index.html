@@ -287,6 +287,10 @@
 </div>
 
 <script>
+    const RANKING_API_URL = 'https://script.google.com/macros/s/AKfycbxccL-H1HNQD7cjLuBdkyJjZaxgK9_pz6orr3DGTR61RX-UlyHR9vM4w84yWTHvXMWGiQ/exec';
+    let topPlayers = JSON.parse(localStorage.getItem('cachedRanking_SanMiguel')) || [];
+    let scoreSaved = false;
+
     let INITIAL_TIMER = 232;
     let TRAIN_SPEED = 0.02;
 
@@ -339,7 +343,30 @@
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
+    function fetchRanking() {
+        fetch(RANKING_API_URL)
+            .then(res => res.json())
+            .then(data => { 
+                let fetchedList = [];
+                if (Array.isArray(data)) {
+                    fetchedList = data;
+                } else if (data && Array.isArray(data.ranking)) {
+                    fetchedList = data.ranking;
+                }
+
+                if (fetchedList.length > 0) {
+                    topPlayers = fetchedList;
+                    localStorage.setItem('cachedRanking_SanMiguel', JSON.stringify(fetchedList));
+                    if (gameState === 'SESSION_END') {
+                        drawScreen();
+                    }
+                }
+            })
+            .catch(err => console.log("Cargando ranking inicial...", err));
+    }
+
     function loadConfigAndAssets(callback) {
+        fetchRanking();
         fetch('config.json?v=' + Date.now())
             .then(res => res.json())
             .then(config => {
@@ -411,7 +438,6 @@
         ];
 
         let occupied = Array(ROWS).fill(false).map(() => Array(COLS).fill(false));
-        // Ocupar celdas dobles de Retiro y San Miguel
         occupied[0][0] = true; occupied[0][1] = true;
         occupied[7][6] = true; occupied[7][7] = true;
 
@@ -426,7 +452,7 @@
             while (!placed && attempts < 200) {
                 attempts++;
                 let r = Math.floor(Math.random() * ROWS);
-                let c = Math.floor(Math.random() * (COLS - 1)); // 0 a 6 para ocupar c y c+1
+                let c = Math.floor(Math.random() * (COLS - 1));
 
                 if (!occupied[r][c] && !occupied[r][c + 1]) {
                     occupied[r][c] = true;
@@ -470,6 +496,7 @@
         totalTracksTraversed = 0;
         roundCount = 1;
         timer = INITIAL_TIMER;
+        scoreSaved = false;
 
         setupBoardData();
         gameState = 'BUILDING';
@@ -602,7 +629,6 @@
             }
 
             if (targetCell.type === 'station') {
-                // Si entra a una estación distinta de la última o si reingresa tras estar en una vía
                 if (train.lastStation !== targetCell.station) {
                     train.lastStation = targetCell.station;
                     targetCell.station.visited = true;
@@ -621,7 +647,7 @@
                 train.entryPort = requiredEntryPort;
                 train.exitPort = (requiredEntryPort + 2) % 4;
             } else if (targetCell.type === 'track') {
-                train.lastStation = null; // Al salir a una vía, habilita volver a colectar en cualquier estación
+                train.lastStation = null;
 
                 if (targetCell.ports[requiredEntryPort] === 1) {
                     train.col = nextCol;
@@ -743,29 +769,62 @@
         }
 
         if (gameState === 'SESSION_END') {
+            if (!scoreSaved && sessionScore > 0) {
+                scoreSaved = true;
+                let playerName = prompt("¡Llegaste a SAN MIGUEL! Ingresa tu nombre para el ranking:", "Nombre");
+                if (playerName && playerName.trim() !== "") {
+                    playerName = playerName.trim().substring(0, 15);
+                    let finalScore = sessionScore;
+
+                    topPlayers.push({ name: playerName, score: finalScore });
+                    topPlayers.sort((a, b) => b.score - a.score);
+                    topPlayers = topPlayers.slice(0, 5);
+                    localStorage.setItem('cachedRanking_SanMiguel', JSON.stringify(topPlayers));
+
+                    fetch(`${RANKING_API_URL}?action=save&name=${encodeURIComponent(playerName)}&score=${finalScore}`)
+                        .then(res => res.json())
+                        .catch(err => console.error("Error al guardar ranking", err));
+                }
+            }
+
             ctx.fillStyle = 'rgba(2, 18, 6, 0.95)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             ctx.textAlign = 'center';
             ctx.fillStyle = '#ffcc00';
             ctx.font = 'bold 24px Courier New';
-            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 120);
+            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 50);
 
             ctx.fillStyle = '#00ff66';
-            ctx.font = 'bold 14px Courier New';
-            ctx.fillText(`Rondas Jugadas: ${roundCount}`, canvas.width / 2, 165);
-            ctx.fillText(`Fichas Recolectadas: ${totalCoins}`, canvas.width / 2, 190);
-            ctx.fillText(`Vías Recorridas: ${totalTracksTraversed}`, canvas.width / 2, 215);
+            ctx.font = '12px Courier New';
+            ctx.fillText(`Rondas: ${roundCount}  |  Fichas: ${totalCoins}  |  Vías: ${totalTracksTraversed}`, canvas.width / 2, 80);
 
             ctx.fillStyle = '#ffcc00';
-            ctx.font = 'bold 18px Courier New';
-            ctx.fillText(`PUNTAJE FINAL: ${sessionScore}`, canvas.width / 2, 255);
+            ctx.font = 'bold 16px Courier New';
+            ctx.fillText(`PUNTAJE FINAL: ${sessionScore}`, canvas.width / 2, 108);
+
+            ctx.fillStyle = '#ff8c00';
+            ctx.font = 'bold 15px Courier New';
+            ctx.fillText('--- MEJORES PUNTAJES ---', canvas.width / 2, 140);
+
+            ctx.font = '15px Courier New';
+            if (topPlayers.length === 0) {
+                ctx.fillStyle = 'rgba(0, 255, 102, 0.6)';
+                ctx.fillText('Conectando al ranking...', canvas.width / 2, 180);
+            } else {
+                topPlayers.forEach((p, index) => {
+                    let text = `${index + 1}. ${p.name.padEnd(10, ' ')} ${p.score}`;
+                    ctx.fillStyle = (index === 0) ? '#ffff00' : '#00ff66';
+                    ctx.fillText(text, canvas.width / 2, 175 + (index * 26));
+                });
+            }
 
             ctx.fillStyle = '#ffffff';
-            ctx.font = 'bold 11px Courier New';
-            ctx.fillText('Esperando el próximo tren...', canvas.width / 2, 305);
+            ctx.font = 'bold 12px Courier New';
+            ctx.fillText('Toca la pantalla o presiona A para reiniciar', canvas.width / 2, 350);
             ctx.font = '9px Courier New';
-            ctx.fillText('(Tren San Martin circula con demoras por un problema técnico)', canvas.width / 2, 325);
+            ctx.fillStyle = 'rgba(0, 255, 102, 0.7)';
+            ctx.fillText('(Tren San Martin circula con demoras por un problema técnico)', canvas.width / 2, 375);
             ctx.textAlign = 'left';
         }
     }
@@ -930,7 +989,7 @@
     }
 
     function handleActionA() {
-        if (gameState === 'START') {
+        if (gameState === 'START' || gameState === 'SESSION_END') {
             startNewGameSession();
         } else if (gameState === 'BUILDING' || gameState === 'RUNNING') {
             placeTrack();
@@ -963,7 +1022,7 @@
     document.getElementById('btn-b').addEventListener('click', handleActionB);
 
     canvas.addEventListener('click', (e) => {
-        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY') {
+        if (gameState === 'START' || gameState === 'GAMEOVER' || gameState === 'VICTORY' || gameState === 'SESSION_END') {
             handleActionA();
             return;
         }
