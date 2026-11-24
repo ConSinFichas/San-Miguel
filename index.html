@@ -209,7 +209,8 @@
         transition: background 0.1s;
     }
 
-    .action-btn:active { 
+    .action-btn:active,
+    .action-btn.pressed { 
         background: rgba(0, 255, 102, 0.3); 
         box-shadow: 0 0 15px rgba(0, 255, 102, 0.6); 
     }
@@ -271,7 +272,7 @@
         <div class="action-container">
             <div class="action-group" id="group-b">
                 <div class="action-btn" id="btn-b">B</div>
-                <span class="action-label">LARGAR TREN</span>
+                <span class="action-label" id="label-b">LARGAR TREN</span>
             </div>
             <div class="action-group" id="group-a">
                 <div class="action-btn" id="btn-a">A</div>
@@ -282,7 +283,7 @@
 
     <div class="footer-shortcuts">
         <span>⌨ Flechas: Mover Cursor | A: Colocar Vía</span>
-        <span>B: Largar Tren Anticipado</span>
+        <span>B: Largarlo / Mantener x2</span>
     </div>
 </div>
 
@@ -307,6 +308,9 @@
         'via6': { name: 'Curva ON',   ports: [1, 0, 0, 1] }
     };
     const TRACK_KEYS = ['via1', 'via2', 'via3', 'via4', 'via5', 'via6'];
+    const STRAIGHT_KEYS = ['via1', 'via2'];
+    const CURVE_KEYS = ['via3', 'via4', 'via5', 'via6'];
+    let expectStraightNext = true;
 
     const COLS = 8;
     const ROWS = 8;
@@ -315,33 +319,83 @@
     const SIDEBAR_X = 450;
     const SIDEBAR_WIDTH = 150;
 
-    const INTERMEDIATE_STATION_POOL = [
-        "V. DEL PARQUE", "S. PEÑA", "S. LUGARES", "CASEROS",
-        "PALOMAR", "HURLINGHAM", "W. MORRIS", "MUÑIZ",
-        "B. VISTA", "JOSE C. PAZ"
-    ];
+    const STAGE_CONFIGS = {
+        1: {
+            startName: 'RETIRO',
+            endName: 'PRÓXIMA ESTACIÓN...',
+            isFinalEnd: false,
+            pool: ['PALERMO', 'CHACARITA', 'PATERNAL', 'V. DEL PARQUE']
+        },
+        2: {
+            startName: 'VILLA DEL PARQUE',
+            endName: 'PALOMAR',
+            isFinalEnd: false,
+            pool: ['DEVOTO', 'S. PEÑA', 'S. LUGARES', 'CASEROS']
+        },
+        3: {
+            startName: 'PALOMAR',
+            endName: 'SAN MIGUEL',
+            isFinalEnd: true,
+            pool: ['HURLINGHAM', 'W. MORRIS', 'B. VISTA', 'MUÑIZ']
+        }
+    };
+
+    const REQUIRED_BONUS_ORDER = ['PALERMO', 'CHACARITA', 'PATERNAL', 'V. DEL PARQUE'];
 
     let grid = [];
     let queue = [];
     let cursor = { col: 2, row: 0 };
     let timer = INITIAL_TIMER;
     let timerInterval = null;
-    let roundAudioStart = 0;
+    let sessionStartTimestamp = null;
+    let timeExpiredDuringRun = false;
+    let sessionEndedReason = 'TIME_UP'; // 'TIME_UP' | 'VICTORY'
+
+    // Control de etapas y bonus
+    let roundCount = 1; // Etapa 1, 2 o 3
+    let visitedOrderRound1 = [];
+    let bonusTriggered = false;
+    let autoBuildInterval = null;
+    let autoBuildPlan = [];
+    let autoBuildIndex = 0;
+    let autoBuildPostRun = false;
+
+    // Estado de aceleración con botón B
+    let isButtonBHeld = false;
+    let isTrainBoosted = false;
 
     // Métricas Acumuladas de la Sesión
     let sessionScore = 0;
     let totalCoins = 0;
     let totalTracksTraversed = 0;
-    let roundCount = 0;
 
     // Métricas de la Ronda Actual
     let roundScore = 0;
 
-    let gameState = 'START'; // 'START', 'BUILDING', 'RUNNING', 'VICTORY', 'GAMEOVER', 'SESSION_END'
+    // Estados: 'START', 'BUILDING', 'RUNNING', 'BONUS_ANIM', 'VICTORY', 'GAMEOVER', 'SESSION_END'
+    let gameState = 'START';
     let train = { col: 0, row: 0, entryPort: 3, exitPort: 1, progress: 0, speed: TRAIN_SPEED, lastStation: null };
 
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
+
+    function syncButtonBVisualState() {
+        const btnB = document.getElementById('btn-b');
+        const labelB = document.getElementById('label-b');
+        const canBoost = gameState === 'RUNNING' && !train.isBonusRun;
+        isTrainBoosted = canBoost && isButtonBHeld;
+
+        if (btnB) {
+            btnB.classList.toggle('pressed', isButtonBHeld || isTrainBoosted);
+        }
+        if (labelB) {
+            if (gameState === 'RUNNING' && !train.isBonusRun) {
+                labelB.innerText = 'ACELERAR x2';
+            } else {
+                labelB.innerText = 'LARGAR TREN';
+            }
+        }
+    }
 
     function fetchRanking() {
         fetch(RANKING_API_URL)
@@ -421,10 +475,12 @@
             const pct = (cur / audioElement.duration) * 100;
             document.getElementById('track-progress').style.width = pct + '%';
 
-            // Detecta cuando la canción termina y vuelve a empezar desde el segundo 0
             if (cur < lastAudioTime - 5) {
                 if (gameState === 'SESSION_END') {
                     startNewGameSession();
+                } else if (gameState !== 'START' && sessionEndedReason !== 'VICTORY') {
+                    sessionEndedReason = 'TIME_UP';
+                    triggerSessionEnd();
                 }
             }
             lastAudioTime = cur;
@@ -432,56 +488,126 @@
     }
 
     function init() {
-        setupBoardData();
+        setupBoardData(1);
         gameState = 'START';
+        syncButtonBVisualState();
         requestAnimationFrame(gameLoop);
     }
 
-    function generateRandomStations() {
+    function canPlaceStationWithMargin(occupied, col, row) {
+        if (row === 0 && (col === 0 || col >= COLS - 2)) return false;
+        if (row === ROWS - 1 && (col === 0 || col >= COLS - 2)) return false;
+
+        const rMin = Math.max(0, row - 1);
+        const rMax = Math.min(ROWS - 1, row + 1);
+        const cMin = Math.max(0, col - 1);
+        const cMax = Math.min(COLS - 1, col + 2);
+
+        for (let rr = rMin; rr <= rMax; rr++) {
+            for (let cc = cMin; cc <= cMax; cc++) {
+                if (occupied[rr][cc]) return false;
+            }
+        }
+        return true;
+    }
+
+    function generateStageStations(stageNum, customStationCoords = null) {
+        const cfg = STAGE_CONFIGS[stageNum] || STAGE_CONFIGS[3];
         const stations = [
-            { name: 'RETIRO', col: 0, row: 0, isStart: true, coins: 0 },
-            { name: 'SAN MIGUEL', col: 6, row: 7, isEnd: true, coins: 500 }
+            { name: cfg.startName, col: 0, row: 0, isStart: true, coins: 0 },
+            { name: cfg.endName, col: 6, row: 7, isEnd: true, isFinalEnd: cfg.isFinalEnd, coins: 500 }
         ];
 
         let occupied = Array(ROWS).fill(false).map(() => Array(COLS).fill(false));
         occupied[0][0] = true; occupied[0][1] = true;
         occupied[7][6] = true; occupied[7][7] = true;
 
-        let shuffledNames = [...INTERMEDIATE_STATION_POOL].sort(() => Math.random() - 0.5);
-        let selectedNames = shuffledNames.slice(0, 4);
-
         const coinValues = [150, 200, 250, 300];
 
-        selectedNames.forEach((name, idx) => {
-            let placed = false;
-            let attempts = 0;
-            while (!placed && attempts < 200) {
-                attempts++;
-                let r = Math.floor(Math.random() * ROWS);
-                let c = Math.floor(Math.random() * (COLS - 1));
+        if (customStationCoords) {
+            cfg.pool.forEach((name, idx) => {
+                const pos = customStationCoords[idx];
+                occupied[pos.row][pos.col] = true;
+                occupied[pos.row][pos.col + 1] = true;
+                stations.push({
+                    name: name,
+                    col: pos.col,
+                    row: pos.row,
+                    isStart: false,
+                    isEnd: false,
+                    coins: coinValues[idx]
+                });
+            });
+            return stations;
+        }
 
-                if (!occupied[r][c] && !occupied[r][c + 1]) {
-                    occupied[r][c] = true;
-                    occupied[r][c + 1] = true;
-                    stations.push({
-                        name: name,
-                        col: c,
-                        row: r,
-                        isStart: false,
-                        coins: coinValues[idx]
-                    });
-                    placed = true;
+        let validLayout = null;
+        for (let boardAttempt = 0; boardAttempt < 80; boardAttempt++) {
+            let tempOccupied = Array(ROWS).fill(false).map(() => Array(COLS).fill(false));
+            tempOccupied[0][0] = true; tempOccupied[0][1] = true;
+            tempOccupied[7][6] = true; tempOccupied[7][7] = true;
+
+            let candidatePositions = [];
+            let allCandidates = [];
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c <= COLS - 2; c++) {
+                    allCandidates.push({ col: c, row: r });
                 }
             }
+            allCandidates.sort(() => Math.random() - 0.5);
+
+            for (const cand of allCandidates) {
+                if (canPlaceStationWithMargin(tempOccupied, cand.col, cand.row)) {
+                    tempOccupied[cand.row][cand.col] = true;
+                    tempOccupied[cand.row][cand.col + 1] = true;
+                    candidatePositions.push(cand);
+                    if (candidatePositions.length === cfg.pool.length) break;
+                }
+            }
+
+            if (candidatePositions.length === cfg.pool.length) {
+                validLayout = candidatePositions;
+                break;
+            }
+        }
+
+        if (!validLayout) {
+            validLayout = [
+                { col: 4, row: 1 },
+                { col: 1, row: 3 },
+                { col: 5, row: 3 },
+                { col: 2, row: 5 }
+            ];
+        }
+
+        let shuffledNames = [...cfg.pool].sort(() => Math.random() - 0.5);
+        shuffledNames.forEach((name, idx) => {
+            const pos = validLayout[idx];
+            stations.push({
+                name: name,
+                col: pos.col,
+                row: pos.row,
+                isStart: false,
+                isEnd: false,
+                coins: coinValues[idx]
+            });
         });
 
         return stations;
     }
 
-    function setupBoardData() {
+    function setupBoardData(stageNum, customStationCoords = null) {
+        if (autoBuildInterval) {
+            clearInterval(autoBuildInterval);
+            autoBuildInterval = null;
+        }
+
+        isTrainBoosted = false;
+        syncButtonBVisualState();
+
         grid = Array(ROWS).fill(null).map(() => Array(COLS).fill(null));
         
-        let currentStations = generateRandomStations();
+        let currentStations = generateStageStations(stageNum, customStationCoords);
 
         currentStations.forEach(st => {
             st.visited = false;
@@ -489,6 +615,11 @@
             grid[st.row][st.col + 1] = { type: 'station', station: st, isMainCell: false };
         });
 
+        if (stageNum === 1) {
+            visitedOrderRound1 = [];
+        }
+
+        expectStraightNext = Math.random() < 0.5;
         queue = [];
         for (let i = 0; i < 6; i++) pushRandomTrack();
 
@@ -497,49 +628,231 @@
     }
 
     function startNewGameSession() {
+        if (autoBuildInterval) {
+            clearInterval(autoBuildInterval);
+            autoBuildInterval = null;
+        }
+
         sessionScore = 0;
         totalCoins = 0;
         totalTracksTraversed = 0;
         roundCount = 1;
         timer = INITIAL_TIMER;
         scoreSaved = false;
+        bonusTriggered = false;
+        timeExpiredDuringRun = false;
+        sessionEndedReason = 'TIME_UP';
+        isTrainBoosted = false;
+        sessionStartTimestamp = Date.now();
 
-        setupBoardData();
+        setupBoardData(1);
         gameState = 'BUILDING';
+        syncButtonBVisualState();
 
         if (audioElement) {
             if (audioElement.paused) playAudioTrack();
-            roundAudioStart = audioElement.currentTime;
         }
 
         startGlobalTimer();
     }
 
+    function checkRound1BonusCondition() {
+        if (bonusTriggered) return false;
+        let step = 0;
+        for (let i = 0; i < visitedOrderRound1.length; i++) {
+            if (visitedOrderRound1[i] === REQUIRED_BONUS_ORDER[step]) {
+                step++;
+                if (step === REQUIRED_BONUS_ORDER.length) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    function buildFullGridBonusPath() {
+        const path = [];
+        for (let c = 2; c < COLS; c++) path.push({ col: c, row: 0 });
+        for (let r = 1; r < ROWS - 1; r++) {
+            if (r % 2 === 1) {
+                for (let c = COLS - 1; c >= 0; c--) path.push({ col: c, row: r });
+            } else {
+                for (let c = 0; c < COLS; c++) path.push({ col: c, row: r });
+            }
+        }
+        path.push({ col: 7, row: 7 });
+
+        return path;
+    }
+
+    function startBonusStage2AutoRun() {
+        if (bonusTriggered) return;
+        bonusTriggered = true;
+        roundCount = 2;
+
+        const snakeStationCoords = [
+            { col: 4, row: 1 }, // DEVOTO
+            { col: 3, row: 2 }, // S. PEÑA
+            { col: 4, row: 3 }, // S. LUGARES
+            { col: 3, row: 5 }  // CASEROS
+        ];
+
+        setupBoardData(2, snakeStationCoords);
+        gameState = 'BONUS_ANIM';
+        syncButtonBVisualState();
+
+        const pathCells = buildFullGridBonusPath();
+        autoBuildPlan = [];
+
+        for (let i = 0; i < pathCells.length; i++) {
+            const cur = pathCells[i];
+            const cell = grid[cur.row][cur.col];
+
+            if (cell && cell.type === 'station' && !(cur.col === 7 && cur.row === 7)) {
+                continue;
+            }
+
+            const prev = i === 0 ? { col: 1, row: 0 } : pathCells[i - 1];
+            const next = i === pathCells.length - 1 ? { col: 6, row: 7 } : pathCells[i + 1];
+
+            let entry = 3;
+            if (prev.row < cur.row) entry = 0;
+            else if (prev.col > cur.col) entry = 1;
+            else if (prev.row > cur.row) entry = 2;
+            else if (prev.col < cur.col) entry = 3;
+
+            let exit = 1;
+            if (next.row < cur.row) exit = 0;
+            else if (next.col > cur.col) exit = 1;
+            else if (next.row > cur.row) exit = 2;
+            else if (next.col < cur.col) exit = 3;
+
+            const neededKey = findTrackKeyByPorts(entry, exit);
+            autoBuildPlan.push({
+                col: cur.col,
+                row: cur.row,
+                key: neededKey,
+                isFinalStationCell: (cur.col === 7 && cur.row === 7)
+            });
+        }
+
+        autoBuildIndex = 0;
+        autoBuildPostRun = false;
+
+        autoBuildInterval = setInterval(() => {
+            if (gameState !== 'BONUS_ANIM') {
+                clearInterval(autoBuildInterval);
+                autoBuildInterval = null;
+                return;
+            }
+
+            if (autoBuildIndex < autoBuildPlan.length) {
+                const step = autoBuildPlan[autoBuildIndex];
+                cursor = { col: step.col, row: step.row };
+                if (!step.isFinalStationCell) {
+                    grid[step.row][step.col] = {
+                        type: 'track',
+                        key: step.key,
+                        ports: TRACK_TYPES[step.key].ports
+                    };
+                }
+                autoBuildIndex++;
+            } else if (!autoBuildPostRun) {
+                autoBuildPostRun = true;
+                clearInterval(autoBuildInterval);
+                autoBuildInterval = null;
+
+                gameState = 'RUNNING';
+                let startCell = grid[0][0];
+                train = {
+                    col: 0,
+                    row: 0,
+                    entryPort: 3,
+                    exitPort: 1,
+                    progress: 0,
+                    speed: Math.max(TRAIN_SPEED * 2.2, 0.045),
+                    lastStation: startCell ? startCell.station : null,
+                    isBonusRun: true
+                };
+                syncButtonBVisualState();
+            }
+        }, 180);
+    }
+
+    function findTrackKeyByPorts(p1, p2) {
+        const target = [0, 0, 0, 0];
+        target[p1] = 1;
+        target[p2] = 1;
+        for (const key of TRACK_KEYS) {
+            const ports = TRACK_TYPES[key].ports;
+            if (ports[0] === target[0] && ports[1] === target[1] && ports[2] === target[2] && ports[3] === target[3]) {
+                return key;
+            }
+        }
+        return 'via1';
+    }
+
     function nextRound() {
-        if (timer <= 0) {
-            gameState = 'SESSION_END';
+        if (sessionEndedReason === 'VICTORY' && roundCount === 3) {
+            triggerSessionEnd();
             return;
         }
 
-        roundCount++;
-        setupBoardData();
-        gameState = 'BUILDING';
+        if (timer <= 0 || timeExpiredDuringRun) {
+            sessionEndedReason = 'TIME_UP';
+            triggerSessionEnd();
+            return;
+        }
+
+        if (roundCount === 1 && checkRound1BonusCondition()) {
+            startBonusStage2AutoRun();
+            return;
+        }
+
+        if (roundCount < 3) {
+            roundCount++;
+            setupBoardData(roundCount);
+            gameState = 'BUILDING';
+            syncButtonBVisualState();
+        } else {
+            sessionEndedReason = 'VICTORY';
+            triggerSessionEnd();
+        }
+    }
+
+    function triggerSessionEnd() {
+        if (autoBuildInterval) {
+            clearInterval(autoBuildInterval);
+            autoBuildInterval = null;
+        }
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+        isTrainBoosted = false;
+        gameState = 'SESSION_END';
+        syncButtonBVisualState();
     }
 
     function startGlobalTimer() {
         if (timerInterval) clearInterval(timerInterval);
-        timerInterval = setInterval(() => {
-            if (audioElement && !audioElement.paused) {
-                let curTime = audioElement.currentTime;
-                if (curTime < roundAudioStart && audioElement.duration) {
-                    curTime += audioElement.duration;
-                }
-                let elapsed = curTime - roundAudioStart;
-                timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
+        if (!sessionStartTimestamp) sessionStartTimestamp = Date.now();
 
-                if (timer <= 0 && gameState === 'BUILDING') {
-                    timer = 0;
+        timerInterval = setInterval(() => {
+            if (gameState === 'START' || gameState === 'SESSION_END') return;
+
+            let elapsed = (Date.now() - sessionStartTimestamp) / 1000;
+            timer = Math.max(0, Math.ceil(INITIAL_TIMER - elapsed));
+
+            if (timer <= 0) {
+                timer = 0;
+                if (gameState === 'BUILDING') {
                     startTrainRun();
+                } else if (gameState === 'RUNNING' || gameState === 'BONUS_ANIM') {
+                    timeExpiredDuringRun = true;
+                } else if (gameState === 'VICTORY' || gameState === 'GAMEOVER') {
+                    sessionEndedReason = 'TIME_UP';
+                    triggerSessionEnd();
                 }
             }
         }, 100);
@@ -567,7 +880,9 @@
     }
 
     function pushRandomTrack() {
-        const randKey = TRACK_KEYS[Math.floor(Math.random() * TRACK_KEYS.length)];
+        const pool = expectStraightNext ? STRAIGHT_KEYS : CURVE_KEYS;
+        const randKey = pool[Math.floor(Math.random() * pool.length)];
+        expectStraightNext = !expectStraightNext;
         queue.push(randKey);
     }
 
@@ -589,6 +904,7 @@
     function startTrainRun() {
         if (gameState !== 'BUILDING') return;
         gameState = 'RUNNING';
+        isTrainBoosted = false;
 
         let startCell = grid[0][0];
 
@@ -599,14 +915,23 @@
             exitPort: 1,
             progress: 0,
             speed: TRAIN_SPEED,
-            lastStation: startCell ? startCell.station : null
+            lastStation: startCell ? startCell.station : null,
+            isBonusRun: false
         };
+        syncButtonBVisualState();
     }
 
     function updateTrain() {
         if (gameState !== 'RUNNING') return;
 
-        train.progress += train.speed;
+        let currentSpeed = train.speed;
+        if (!train.isBonusRun) {
+            currentSpeed = isButtonBHeld ? TRAIN_SPEED * 2 : TRAIN_SPEED;
+            isTrainBoosted = isButtonBHeld;
+            syncButtonBVisualState();
+        }
+
+        train.progress += currentSpeed;
 
         if (train.progress >= 1) {
             train.progress = 0;
@@ -640,6 +965,10 @@
                     targetCell.station.visited = true;
                     roundScore += targetCell.station.coins;
                     totalCoins += targetCell.station.coins;
+
+                    if (roundCount === 1 && !targetCell.station.isStart && !targetCell.station.isEnd) {
+                        visitedOrderRound1.push(targetCell.station.name);
+                    }
                 }
 
                 if (targetCell.station.isEnd) {
@@ -670,15 +999,26 @@
 
     function endRound(isVictory) {
         sessionScore += roundScore;
+        isTrainBoosted = false;
+
+        if (isVictory && roundCount === 3) {
+            sessionEndedReason = 'VICTORY';
+            triggerSessionEnd();
+            return;
+        }
+
+        if (timer <= 0 || timeExpiredDuringRun) {
+            sessionEndedReason = 'TIME_UP';
+            triggerSessionEnd();
+            return;
+        }
+
         if (isVictory) {
             gameState = 'VICTORY';
         } else {
             gameState = 'GAMEOVER';
         }
-
-        if (timer <= 0) {
-            gameState = 'SESSION_END';
-        }
+        syncButtonBVisualState();
     }
 
     function drawScreen() {
@@ -707,7 +1047,7 @@
             }
         }
 
-        if (gameState === 'BUILDING' || gameState === 'RUNNING') {
+        if (gameState === 'BUILDING' || gameState === 'RUNNING' || gameState === 'BONUS_ANIM') {
             let cx = cursor.col * CELL_SIZE;
             let cy = cursor.row * CELL_SIZE;
             ctx.strokeStyle = '#ff3366';
@@ -720,6 +1060,28 @@
         }
 
         drawSidebar();
+
+        if (bonusTriggered && roundCount === 2 && (gameState === 'BONUS_ANIM' || (gameState === 'RUNNING' && train.isBonusRun))) {
+            let blinkOn = Math.floor(Date.now() / 650) % 2 === 0;
+            if (blinkOn) {
+                let bannerW = 540;
+                let bannerH = 64;
+                let bannerX = (canvas.width - bannerW) / 2;
+                let bannerY = (canvas.height - bannerH) / 2;
+
+                ctx.fillStyle = '#cc0000';
+                ctx.fillRect(bannerX, bannerY, bannerW, bannerH);
+                ctx.strokeStyle = '#ffffff';
+                ctx.lineWidth = 2.5;
+                ctx.strokeRect(bannerX, bannerY, bannerW, bannerH);
+
+                ctx.textAlign = 'center';
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 14px Courier New';
+                ctx.fillText('servicio rápido entre las estaciones Villa del Parque y Palomar', canvas.width / 2, bannerY + 37);
+                ctx.textAlign = 'left';
+            }
+        }
 
         if (gameState === 'START') {
             ctx.fillStyle = 'rgba(2, 18, 6, 0.92)';
@@ -756,7 +1118,7 @@
             if (gameState === 'VICTORY') {
                 ctx.fillStyle = '#ffcc00';
                 ctx.font = 'bold 22px Courier New';
-                ctx.fillText('¡LLEGASTE A SAN MIGUEL!', canvas.width / 2, 140);
+                ctx.fillText(`¡ETAPA ${roundCount} COMPLETADA!`, canvas.width / 2, 140);
             } else {
                 ctx.fillStyle = '#ff3366';
                 ctx.font = 'bold 22px Courier New';
@@ -770,14 +1132,14 @@
 
             ctx.fillStyle = '#ffffff';
             ctx.font = '12px Courier New';
-            ctx.fillText(`Reloj: ${timer}s - Presiona A para la siguiente ronda`, canvas.width / 2, 280);
+            ctx.fillText(`Reloj: ${timer}s - Presiona A para continuar`, canvas.width / 2, 280);
             ctx.textAlign = 'left';
         }
 
         if (gameState === 'SESSION_END') {
             if (!scoreSaved && sessionScore > 0) {
                 scoreSaved = true;
-                let playerName = prompt("¡Llegaste a San Miguel! Ingresa tu nombre para el ranking:", "Nombre");
+                let playerName = prompt("¡Fin del recorrido! Ingresa tu nombre para el ranking:", "Nombre");
                 if (playerName && playerName.trim() !== "") {
                     playerName = playerName.trim().substring(0, 15);
                     let finalScore = sessionScore;
@@ -797,13 +1159,19 @@
             ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             ctx.textAlign = 'center';
-            ctx.fillStyle = '#ffcc00';
-            ctx.font = 'bold 24px Courier New';
-            ctx.fillText('¡FIN DE LA PARTIDA!', canvas.width / 2, 50);
+            if (sessionEndedReason === 'VICTORY') {
+                ctx.fillStyle = '#ffcc00';
+                ctx.font = 'bold 22px Courier New';
+                ctx.fillText('¡LLEGASTE A SAN MIGUEL!', canvas.width / 2, 50);
+            } else {
+                ctx.fillStyle = '#ff3366';
+                ctx.font = 'bold 20px Courier New';
+                ctx.fillText('Pasan las horas y no llega más...', canvas.width / 2, 50);
+            }
 
             ctx.fillStyle = '#00ff66';
             ctx.font = '12px Courier New';
-            ctx.fillText(`Rondas: ${roundCount}  |  Fichas: ${totalCoins}  |  Vías: ${totalTracksTraversed}`, canvas.width / 2, 80);
+            ctx.fillText(`Etapa: ${roundCount}/3  |  Fichas: ${totalCoins}  |  Vías: ${totalTracksTraversed}`, canvas.width / 2, 80);
 
             ctx.fillStyle = '#ffcc00';
             ctx.font = 'bold 16px Courier New';
@@ -911,11 +1279,11 @@
         ctx.strokeRect(x + 2, y + 2, width, height);
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 13px Courier New';
+        ctx.font = st.name.length > 12 ? 'bold 10px Courier New' : 'bold 12px Courier New';
         ctx.textAlign = 'center';
 
         if (st.coins > 0) {
-            ctx.fillText(st.name, x + CELL_SIZE, y + 25);
+            ctx.fillText(st.name, x + CELL_SIZE, y + 24);
             ctx.fillStyle = '#ffcc00';
             ctx.font = 'bold 11px Courier New';
             ctx.fillText(`+${st.coins}`, x + CELL_SIZE, y + 43);
@@ -973,7 +1341,6 @@
         if (trainImg && trainImg.complete && trainImg.naturalWidth > 0) {
             ctx.drawImage(trainImg, tx - size / 2, ty - size / 2, size, size);
         } else {
-            // Carga de respaldo en caso de retraso al traer la imagen PNG
             ctx.fillStyle = '#ffcc00';
             ctx.beginPath();
             ctx.arc(tx, ty, 10, 0, Math.PI * 2);
@@ -1006,32 +1373,73 @@
     function handleActionB() {
         if (gameState === 'BUILDING') {
             startTrainRun();
+        } else if (gameState === 'RUNNING' && !train.isBonusRun) {
+            isTrainBoosted = true;
+            syncButtonBVisualState();
         }
     }
 
+    function releaseActionB() {
+        isButtonBHeld = false;
+        isTrainBoosted = false;
+        syncButtonBVisualState();
+    }
+
     window.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyB') {
+            isButtonBHeld = true;
+            if (!e.repeat) {
+                handleActionB();
+            } else if (gameState === 'RUNNING' && !train.isBonusRun) {
+                isTrainBoosted = true;
+                syncButtonBVisualState();
+            }
+            return;
+        }
         if (e.repeat) return;
         if (e.code === 'ArrowUp') moveCursor(0, -1);
         if (e.code === 'ArrowDown') moveCursor(0, 1);
         if (e.code === 'ArrowLeft') moveCursor(-1, 0);
         if (e.code === 'ArrowRight') moveCursor(1, 0);
         if (e.code === 'Space' || e.code === 'KeyA') handleActionA();
-        if (e.code === 'KeyB') handleActionB();
     });
+
+    window.addEventListener('keyup', (e) => {
+        if (e.code === 'KeyB') {
+            releaseActionB();
+        }
+    });
+
+    window.addEventListener('blur', releaseActionB);
+
+    const btnB = document.getElementById('btn-b');
+    btnB.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        isButtonBHeld = true;
+        handleActionB();
+    });
+    btnB.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        isButtonBHeld = true;
+        handleActionB();
+    }, { passive: false });
+
+    window.addEventListener('mouseup', releaseActionB);
+    window.addEventListener('touchend', releaseActionB);
+    window.addEventListener('touchcancel', releaseActionB);
 
     document.getElementById('btn-up').addEventListener('click', () => moveCursor(0, -1));
     document.getElementById('btn-down').addEventListener('click', () => moveCursor(0, 1));
     document.getElementById('btn-left').addEventListener('click', () => moveCursor(-1, 0));
     document.getElementById('btn-right').addEventListener('click', () => moveCursor(1, 0));
     document.getElementById('btn-a').addEventListener('click', handleActionA);
-    document.getElementById('btn-b').addEventListener('click', handleActionB);
 
     canvas.addEventListener('click', (e) => {
         if (gameState === 'START') {
             handleActionA();
             return;
         }
-        if (gameState === 'SESSION_END') {
+        if (gameState === 'SESSION_END' || gameState === 'BONUS_ANIM') {
             return;
         }
         if (gameState === 'GAMEOVER' || gameState === 'VICTORY') {
